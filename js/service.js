@@ -107,6 +107,9 @@ let logs = config?.control?.log;
 let needPatch = false;
 let searchQuery = "";
 let usedSearchQueryTemplates = new Set();
+// Set for the duration of a manual run: the user asked for these searches, so
+// neither the plan trimming nor the "daily quota is full" early stop applies.
+let ignoreDailyQuota = false;
 // Topic run for the current session: keeps consecutive queries inside one
 // subject for a few searches instead of re-rolling the category every time.
 let nicheSession = null;
@@ -2766,12 +2769,20 @@ async function search(searches, min, max, interruptible = true) {
     const counterMax = Number(snapshot[counterMaxField]) || 0;
     const quotaFull =
       counterMax > 0 && Number(snapshot[counterField]) >= counterMax;
-    if (quotaFull) {
+    if (quotaFull && !ignoreDailyQuota) {
       earlyStopReason = "quota_full";
       logs &&
         log(
           `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} search counter reached max (${snapshot[counterField]}/${counterMax}); stopping this phase.`,
           "success",
+        );
+    } else if (quotaFull) {
+      // Manual run: the counter is full and these searches earn nothing, but
+      // the user asked for them explicitly, so keep going and say so plainly.
+      logs &&
+        log(
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter is already at max (${snapshot[counterField]}/${counterMax}); continuing anyway because this is a manual run.`,
+          "warning",
         );
     } else if (progressed <= 0 && stallRecoveries < MAX_STALL_RECOVERIES) {
       await recoverFromStall();
@@ -2854,7 +2865,12 @@ async function search(searches, min, max, interruptible = true) {
         await delay(shortestDelay, interruptible);
       }
       const readDelay = getReadDelay();
-      if (clearIt && i < 3 && !clickedForPatch) {
+      // Re-establish the sign-in only in the phase that actually destroyed it.
+      // `clear()` defaults to clearCookies=false and logs "preserving auth
+      // storage", so the desktop phase is never signed out — clicking Bing's
+      // sign-in area there navigated away from the search flow for no reason,
+      // three times per run.
+      if (mobilePhase && clearIt && i < 3 && !clickedForPatch) {
         await chrome.tabs.update(tabId, {
           active: true,
         });
@@ -4064,10 +4080,18 @@ async function activity(tabId, interruptible = true, options = {}) {
 // `notifyOnFinish` is set only by background triggers (alarms/startup): a user
 // who started the run from the open popup watches it live and needs no OS
 // notification.
+/**
+ * `force` runs the requested plan as-is, ignoring today's counters entirely:
+ * no trimming for a completed counter, and no stopping when the daily quota
+ * turns out to be full. It is set by the popup's Search button, where the user
+ * has explicitly asked for a run — a scheduled trigger must never set it, or a
+ * repeating alarm would re-run the whole plan every few minutes for the rest
+ * of the day.
+ */
 async function initialise(
   searches,
   expectedSessionId = null,
-  { notifyOnFinish = false } = {},
+  { notifyOnFinish = false, force = false } = {},
 ) {
   if (expectedSessionId && !isSessionStillActive(expectedSessionId)) {
     logs &&
@@ -4081,8 +4105,17 @@ async function initialise(
   const endedSessionType = config?.runtime?.currentSession?.type ?? null;
   _bumpRunGeneration();
   await resetRuntime(config);
+  ignoreDailyQuota = Boolean(force);
   searches = normalizeSearchPlan(searches);
-  searches = limitSearchPlanForToday(searches);
+  if (!force) {
+    searches = limitSearchPlanForToday(searches);
+  } else {
+    logs &&
+      log(
+        `[INITIALISE] Manual run: using the full plan (${searches.desk} desktop, ${searches.mob} mobile) regardless of today's counters.`,
+        "update",
+      );
+  }
   const hasSearchPhase = searches.desk > 0 || searches.mob > 0;
 
   let tabId = null;
@@ -4263,6 +4296,9 @@ async function initialise(
     });
   } finally {
     needPatch = false;
+    // Scoped to this run only: a scheduled run starting later must go back to
+    // respecting today's counters.
+    ignoreDailyQuota = false;
     await cleanupAfterRun(tabId, expectedSessionId, {
       removeTabFn: (id) => chrome.tabs.remove(id),
       stopCurrentSession:
@@ -4408,16 +4444,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         config.search = normalizeSearchPlan(message?.searches || config.search);
+        // Counters are refreshed for the popup's display only. A manual start
+        // runs the plan the user asked for even when today's counters are
+        // already complete — being told "nothing remaining" after pressing
+        // Search is not a useful answer to an explicit request.
         await refreshSearchCountersFromRewards();
 
-        const limitedSearchPlan = limitSearchPlanForToday(config.search, {
-          silent: true,
-        });
-        if (!hasSearchWork(limitedSearchPlan) && !hasActivityWork()) {
-          log("No searches or activities remaining for today.", "error");
+        if (!hasSearchWork(config.search) && !hasActivityWork()) {
+          log(
+            "Nothing to run: the plan is empty and activities are off.",
+            "error",
+          );
           reply({
             success: false,
-            message: "No searches or activities remaining for today.",
+            message:
+              "Nothing to run: the plan is empty and activities are off.",
           });
           return;
         }
@@ -4430,13 +4471,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         await set(config);
 
-        const startLabel = hasSearchWork(limitedSearchPlan)
-          ? `${limitedSearchPlan.desk} desktop and ${limitedSearchPlan.mob} mobile`
+        const startLabel = hasSearchWork(config.search)
+          ? `${config.search.desk} desktop and ${config.search.mob} mobile`
           : "activities only";
         log(`Starting searches: ${startLabel}. (session: ${searchSession.id})`);
         reply({ success: true, message: "Starting searches." });
 
-        await initialise(config?.search, searchSession.id);
+        await initialise(config?.search, searchSession.id, { force: true });
         break;
       }
 

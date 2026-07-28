@@ -162,14 +162,38 @@ describe("service regressions", () => {
     );
   });
 
-  test("mobile patch click does not immediately repeat the startup warmup click", () => {
+  test("sign-in warmup clicks run only in the mobile phase, and never repeat the patch click", () => {
     expect(serviceSource).toContain("let clickedForPatch = false;");
     expect(serviceSource).toContain(
       "clickedForPatch = await click(interruptible);",
     );
+    // `mobilePhase` is load-bearing, not decoration: clear() defaults to
+    // clearCookies=false, so only the mobile phase is ever signed out. Running
+    // these clicks on desktop navigated the tab to Bing's sign-in area three
+    // times per run while already signed in.
     expect(serviceSource).toContain(
-      "if (clearIt && i < 3 && !clickedForPatch)",
+      "if (mobilePhase && clearIt && i < 3 && !clickedForPatch)",
     );
+  });
+
+  test("a manual start runs the requested plan regardless of today's counters", () => {
+    // Pressing Search is an explicit request; answering it with "nothing
+    // remaining for today" is not useful. Scheduled triggers must NOT pass
+    // force, or a repeating alarm would re-run the whole plan all day.
+    expect(serviceSource).toContain(
+      "await initialise(config?.search, searchSession.id, { force: true });",
+    );
+    const scheduleStart = serviceSource.indexOf(
+      "async function tryStartScheduledRun",
+    );
+    const scheduleEnd = serviceSource.indexOf("\nfunction ", scheduleStart);
+    expect(serviceSource.slice(scheduleStart, scheduleEnd)).not.toContain(
+      "force: true",
+    );
+    // The force flag must be scoped to the run that set it.
+    expect(serviceSource).toContain("ignoreDailyQuota = Boolean(force);");
+    expect(serviceSource).toContain("ignoreDailyQuota = false;");
+    expect(serviceSource).toContain("if (quotaFull && !ignoreDailyQuota)");
   });
 
   test("activity confirmation does not count skips or zero-delta processed tabs as success", () => {
