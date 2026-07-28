@@ -1,0 +1,397 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Rewards Search Automator</title>
+    <link rel="shortcut icon" href="/logo/bing.png" type="image/x-icon" />
+    <link rel="stylesheet" href="/css/fonts.css" />
+    <link rel="stylesheet" href="/css/popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="appTitle">Kiếm điểm</span>
+    </header>
+    <main>
+      <!-- ── Main screen: one screen, one button ── -->
+      <section id="search">
+        <div class="tile">
+          <div class="input">
+            <label for="searchDesk">Máy tính</label>
+            <input type="number" name="searchDesk" id="searchDesk" />
+          </div>
+          <div class="input">
+            <label for="searchMob">Điện thoại</label>
+            <input type="number" name="searchMob" id="searchMob" />
+          </div>
+          <div class="progressBar">
+            <div class="progress"></div>
+            <div class="failed"></div>
+          </div>
+        </div>
+        <p class="fieldHint">Chọn nhanh số lần tìm — Máy tính · Điện thoại</p>
+        <div id="searchMode" class="mode">
+          <a
+            class="m1"
+            title="11 tìm kiếm Máy tính, 0 tìm kiếm Điện thoại"
+            type="button"
+            role="button"
+            tabindex="0"
+            >11 · 0</a
+          >
+          <a
+            class="m2"
+            title="21 tìm kiếm Máy tính, 11 tìm kiếm Điện thoại"
+            type="button"
+            role="button"
+            tabindex="0"
+            >21 · 11</a
+          >
+          <a
+            class="m3"
+            title="31 tìm kiếm Máy tính, 21 tìm kiếm Điện thoại"
+            type="button"
+            role="button"
+            tabindex="0"
+            >31 · 21</a
+          >
+          <a
+            class="m4"
+            title="51 tìm kiếm Máy tính, 31 tìm kiếm Điện thoại"
+            type="button"
+            role="button"
+            tabindex="0"
+            >51 · 31</a
+          >
+        </div>
+        <button
+          id="searchTrigger"
+          class="trigger"
+          title="Tự chạy search rồi tự làm hết nhiệm vụ kiếm điểm"
+          type="button"
+          role="button"
+        >
+          Làm nhiệm vụ
+        </button>
+        <p class="triggerHint">Tự search + click hết nhiệm vụ kiếm điểm</p>
+        <p class="runStatus" id="runStatus" aria-live="polite"></p>
+      </section>
+
+      <!-- ── Schedule: a primary feature, promoted to its own collapsible ── -->
+      <button
+        id="schedToggle"
+        class="advToggle"
+        type="button"
+        role="button"
+        aria-expanded="false"
+        aria-controls="schedule"
+      >
+        <span class="advToggle-label">
+          <span class="material-symbols-outlined">schedule</span>
+          Lịch tự động
+        </span>
+        <span class="material-symbols-outlined chev">expand_more</span>
+      </button>
+      <section id="schedule" hidden>
+        <div class="tile">
+          <div class="input">
+            <label for="scheduleDesk">Máy tính</label>
+            <input type="number" name="scheduleDesk" id="scheduleDesk" />
+          </div>
+          <div class="input">
+            <label for="scheduleMob">Điện thoại</label>
+            <input type="number" name="scheduleMob" id="scheduleMob" />
+          </div>
+          <div class="progressBar">
+            <div class="progress"></div>
+            <div class="failed"></div>
+          </div>
+        </div>
+        <div class="tile">
+          <div class="input">
+            <label for="scheduleMin">Tối thiểu</label>
+            <input type="number" name="scheduleMin" id="scheduleMin" />
+          </div>
+          <div class="input">
+            <label for="scheduleMax">Tối đa</label>
+            <input type="number" name="scheduleMax" id="scheduleMax" />
+          </div>
+        </div>
+        <p class="fieldHint">Thời gian chờ giữa mỗi lần tìm (giây)</p>
+        <p class="fieldHint">Tần suất tự chạy theo lịch</p>
+        <div id="scheduleMode" class="mode">
+          <a
+            class="m1"
+            title="Không tự chạy theo lịch"
+            type="button"
+            role="button"
+            tabindex="0"
+            >Thủ công</a
+          >
+          <a
+            class="m2"
+            title="Tự chạy khi mở trình duyệt"
+            type="button"
+            role="button"
+            tabindex="0"
+            >Khi mở trình duyệt</a
+          >
+          <a
+            class="m3"
+            title="Tự chạy mỗi ~5 phút (ngẫu nhiên)"
+            type="button"
+            role="button"
+            tabindex="0"
+            >~5 phút/lần</a
+          >
+          <a
+            class="m4"
+            title="Tự chạy mỗi ~15 phút (ngẫu nhiên)"
+            type="button"
+            role="button"
+            tabindex="0"
+            >~15 phút/lần</a
+          >
+          <a
+            class="m5"
+            title="Tự chạy mỗi ngày một lần vào giờ đã chọn (chỉ khi Chrome đang mở)"
+            type="button"
+            role="button"
+            tabindex="0"
+            >Hàng ngày lúc…</a
+          >
+        </div>
+        <div class="menuItem" id="scheduleTimeRow" hidden>
+          <label for="scheduleTime">Giờ chạy hằng ngày:</label>
+          <input type="time" name="scheduleTime" id="scheduleTime" />
+        </div>
+        <p class="fieldHint" id="scheduleTimeHint" hidden>
+          Chỉ chạy được khi Chrome đang mở vào giờ đó; nếu lỡ thì đợi hôm sau
+        </p>
+        <button
+          id="scheduleTrigger"
+          class="trigger"
+          title="Bật/Tắt lịch tự động"
+          type="button"
+          role="button"
+        >
+          Đặt lịch
+        </button>
+      </section>
+
+      <!-- ── Advanced: search options + settings, hidden by default ── -->
+      <button
+        id="advToggle"
+        class="advToggle"
+        type="button"
+        role="button"
+        aria-expanded="false"
+        aria-controls="advanced"
+      >
+        <span class="advToggle-label">
+          <span class="material-symbols-outlined">settings</span>
+          Nâng cao
+        </span>
+        <span class="material-symbols-outlined chev">expand_more</span>
+      </button>
+      <div id="advanced" class="advanced" hidden>
+        <p class="advGroup">Tùy chọn tìm kiếm</p>
+        <div class="tile">
+          <div class="input">
+            <label for="searchMin">Tối thiểu</label>
+            <input type="number" name="searchMin" id="searchMin" />
+          </div>
+          <div class="input">
+            <label for="searchMax">Tối đa</label>
+            <input type="number" name="searchMax" id="searchMax" />
+          </div>
+        </div>
+        <p class="fieldHint">Thời gian chờ giữa mỗi lần tìm (giây)</p>
+        <div class="menuItem">
+          <label for="niche">Chủ đề tìm kiếm:</label>
+          <select name="niche" id="niche">
+            <option value="random" selected>Theo chủ đề (mặc định)</option>
+            <option value="tech">Công nghệ</option>
+            <option value="sports">Thể thao</option>
+            <option value="food">Ẩm thực</option>
+            <option value="health">Sức khỏe</option>
+            <option value="finance">Tài chính</option>
+            <option value="science">Khoa học</option>
+            <option value="gaming">Game</option>
+            <option value="nature">Thiên nhiên</option>
+            <option value="history">Lịch sử</option>
+            <option value="vietnam">Việt Nam</option>
+          </select>
+        </div>
+        <div class="menuItem">
+          <label for="act">Tự làm nhiệm vụ sau khi search:</label>
+          <input
+            type="checkbox"
+            name="act"
+            id="act"
+            title="Bật/Tắt tự làm nhiệm vụ sau khi search"
+          />
+        </div>
+        <div class="menuItem">
+          <label for="activity">Chỉ làm nhiệm vụ (không search):</label>
+          <button
+            id="activity"
+            title="Làm các nhiệm vụ kiếm điểm hằng ngày"
+            type="button"
+            role="button"
+          >
+            Chạy
+          </button>
+          <div class="progressBar">
+            <div class="progress act"></div>
+          </div>
+        </div>
+
+        <p class="advGroup">Cài đặt &amp; bảo trì</p>
+        <section id="settings">
+          <p class="subGroup">Thông tin &amp; tùy chỉnh</p>
+          <div class="menuItem">
+            <label for="version"> Phiên bản: </label>
+            <input type="text" name="version" id="version" value="" readonly />
+          </div>
+          <div class="menuItem">
+            <label for="userManual">Hướng dẫn sử dụng:</label>
+            <button type="button" role="link" id="userManual">Mở</button>
+          </div>
+          <div class="menuItem">
+            <span id="deviceName">Thiết bị giả lập</span>
+            <a
+              id="resetDevice"
+              title="Bấm để chọn lại thiết bị giả lập mới (ngẫu nhiên)"
+              role="button"
+              aria-label="Đổi thiết bị giả lập"
+              tabindex="0"
+            >
+              <span class="material-symbols-outlined">refresh</span>
+            </a>
+          </div>
+          <div class="menuItem">
+            <label for="clear">Tối ưu điểm Mobile (bản vá v1.5.8):</label>
+            <input type="checkbox" name="clear" id="clear" checked />
+          </div>
+          <div class="menuItem">
+            <label for="preserveRewards"
+              >Sao lưu &amp; khôi phục đăng nhập Rewards sau Mobile:</label
+            >
+            <input
+              type="checkbox"
+              name="preserveRewards"
+              id="preserveRewards"
+              checked
+            />
+          </div>
+          <div class="menuItem">
+            <label for="log">Hiện log nâng cao:</label>
+            <input type="checkbox" name="log" id="log" />
+          </div>
+
+          <p class="subGroup">Dữ liệu &amp; nhật ký</p>
+          <div class="menuItem">
+            <label for="download"
+              >Tải lịch sử tìm kiếm (24h, tối đa 10k):</label
+            >
+            <button
+              id="download"
+              title="Tải lịch sử tìm kiếm Bing trong 24 giờ qua (phân trang, khử trùng lặp, tối đa 10.000 mục)"
+              type="button"
+              role="button"
+            >
+              Tải
+            </button>
+          </div>
+          <div class="menuItem">
+            <label for="downloadCrashLog">Tải log lỗi:</label>
+            <button
+              id="downloadCrashLog"
+              title="Tải log lỗi/sự cố dưới dạng file văn bản để phân tích"
+              type="button"
+              role="button"
+            >
+              Tải
+            </button>
+          </div>
+          <div class="menuItem">
+            <label for="simulate">Tab giả lập:</label>
+            <button
+              id="simulate"
+              title="Bật/Tắt tab giả lập với thiết bị đã chọn"
+              type="button"
+              role="button"
+            >
+              Bật/Tắt
+            </button>
+          </div>
+
+          <p class="subGroup">Vùng nguy hiểm — không hoàn tác</p>
+          <div class="menuItem">
+            <label for="clearBrowsingData">Xoá dữ liệu duyệt web Bing:</label>
+            <button
+              id="clearBrowsingData"
+              class="danger"
+              title="Xoá dữ liệu duyệt web của Bing. Bấm hai lần để xác nhận."
+              type="button"
+              role="button"
+            >
+              Xoá
+            </button>
+          </div>
+          <div class="menuItem">
+            <label for="delete">Xoá lịch sử tìm kiếm Bing (tối đa 10k):</label>
+            <button
+              id="delete"
+              class="danger"
+              title="Tìm các URL Bing trong 24h qua rồi xoá từng URL khỏi lịch sử. LƯU Ý: Chrome sẽ xoá TẤT CẢ lượt truy cập các URL đó, không chỉ trong 24 giờ qua. Bấm hai lần để xác nhận."
+              type="button"
+              role="button"
+            >
+              Xoá
+            </button>
+          </div>
+          <div class="menuItem">
+            <label for="clearCrashLog">Xoá log lỗi:</label>
+            <button
+              id="clearCrashLog"
+              class="danger"
+              title="Xoá toàn bộ log lỗi/sự cố đã lưu. Bấm hai lần để xác nhận."
+              type="button"
+              role="button"
+            >
+              Xoá
+            </button>
+          </div>
+          <div class="menuItem">
+            <label for="runtime">Đặt lại dữ liệu chạy:</label>
+            <button
+              id="runtime"
+              class="danger"
+              title="Đặt lại dữ liệu chạy (runtime) của extension. Bấm hai lần để xác nhận."
+              type="button"
+              role="button"
+            >
+              Đặt lại
+            </button>
+          </div>
+          <div class="menuItem">
+            <label for="reset">Đặt lại extension:</label>
+            <button
+              id="reset"
+              class="danger"
+              title="Đặt lại extension về cài đặt mặc định. Bấm hai lần để xác nhận."
+              type="button"
+              role="button"
+            >
+              Đặt lại
+            </button>
+          </div>
+        </section>
+      </div>
+    </main>
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="/js/popup.js" type="module"></script>
+  </body>
+</html>

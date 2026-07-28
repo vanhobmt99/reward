@@ -1,0 +1,603 @@
+* {
+  box-sizing: border-box;
+  border: none;
+  font-family:
+    "Outfit",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Arial,
+    sans-serif;
+  margin: 0;
+  outline: none;
+  padding: 0;
+  text-decoration: none;
+  color: inherit;
+}
+
+:root {
+  --primary: #0072ff;
+  --primary-hover: #2b8bff;
+  --text: #14171f;
+  --text-muted: #626b78;
+  --bg: #fff;
+  --surface: #f0f2f5;
+  --surface-2: #e4e8ee;
+  --border: #dde1e6;
+  --danger: #d92d20;
+  --danger-bg: rgba(217, 45, 32, 0.08);
+  --success: #12b76a;
+  /* Fills that carry WHITE text (toast, armed-confirm, flash). Kept dark in
+     BOTH color schemes so white stays >=4.5:1 (WCAG AA) — the brighter
+     --primary/--danger/--success are for accents/borders, not white-on-fill. */
+  --danger-solid: #c62828;
+  --success-solid: #15803d;
+  --primary-solid: #0060d6;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #4d94ff;
+    --primary-hover: #6aa6ff;
+    --text: #f4f6fa;
+    --text-muted: #98a2b3;
+    --bg: #16181d;
+    --surface: #23262d;
+    --surface-2: #2d313a;
+    --border: #33383f;
+    --danger: #f97066;
+    --danger-bg: rgba(249, 112, 102, 0.12);
+    --success: #47cd89;
+  }
+}
+
+::-webkit-scrollbar {
+  width: calc(6px * var(--scale));
+  height: calc(6px * var(--scale));
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--text-muted);
+  border-radius: calc(3px * var(--scale));
+}
+
+.material-symbols-outlined {
+  align-items: center;
+  display: flex;
+  font-family: "Material Symbols Outlined", system-ui, sans-serif;
+  font-size: calc(20px * var(--scale));
+  font-style: normal;
+  font-weight: normal;
+  height: calc(24px * var(--scale)) !important;
+  justify-content: center;
+  letter-spacing: normal;
+  line-height: 1;
+  overflow: hidden;
+  text-transform: none;
+  white-space: nowrap;
+  width: calc(24px * var(--scale)) !important;
+}
+
+b {
+  font-weight: 600;
+}
+
+body {
+  --scale: 1;
+  background: var(--bg);
+  height: calc(360px * var(--scale));
+  width: calc(320px * var(--scale));
+}
+
+header {
+  align-items: center;
+  display: flex;
+  height: calc(48px * var(--scale));
+  gap: calc(8px * var(--scale));
+  justify-content: center;
+  padding: 0 calc(8px * var(--scale));
+  position: relative;
+  border-bottom: calc(1px * var(--scale)) solid var(--surface);
+}
+
+.appTitle {
+  color: var(--text);
+  font-size: calc(18px * var(--scale));
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.running-badge {
+  align-items: center;
+  background: rgba(0, 114, 255, 0.12);
+  border-radius: calc(999px * var(--scale));
+  color: var(--primary);
+  display: inline-flex;
+  font-size: calc(11px * var(--scale));
+  font-weight: 600;
+  gap: calc(4px * var(--scale));
+  line-height: 1;
+  padding: calc(4px * var(--scale)) calc(8px * var(--scale));
+  position: absolute;
+  right: calc(8px * var(--scale));
+  top: calc(6px * var(--scale));
+  white-space: nowrap;
+}
+
+main {
+  position: relative;
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--scale));
+  height: calc(312px * var(--scale));
+  overflow-y: auto;
+  padding: calc(8px * var(--scale));
+}
+
+section {
+  color: var(--text);
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--scale));
+}
+
+/* `section { display: flex }` (author origin) beats the UA `[hidden]` rule, so
+   a `<section hidden>` (the promoted Schedule panel) would stay visible without
+   this explicit override — mirrors `.advanced[hidden]` below. Same for the
+   flex-based .menuItem rows and .fieldHint that toggle with the m5 mode. */
+section[hidden],
+.menuItem[hidden],
+.fieldHint[hidden] {
+  display: none;
+}
+
+.advanced {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--scale));
+}
+
+.advanced[hidden] {
+  display: none;
+}
+
+.advGroup {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: calc(6px * var(--scale)) calc(2px * var(--scale)) 0;
+}
+
+.triggerHint {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  font-weight: 300;
+  text-align: center;
+  margin-top: calc(-2px * var(--scale));
+}
+
+.advToggle {
+  align-items: center;
+  background: var(--surface);
+  border-radius: calc(4px * var(--scale));
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font-size: calc(14px * var(--scale));
+  font-weight: 500;
+  height: calc(40px * var(--scale));
+  justify-content: space-between;
+  margin-top: calc(4px * var(--scale));
+  padding: calc(8px * var(--scale)) calc(12px * var(--scale));
+  width: 100%;
+}
+
+.advToggle:hover {
+  color: var(--primary);
+}
+
+.advToggle-label {
+  align-items: center;
+  display: flex;
+  gap: calc(8px * var(--scale));
+}
+
+.advToggle .chev {
+  transition: rotate 0.2s ease;
+}
+
+.advToggle[aria-expanded="true"] .chev {
+  rotate: 180deg;
+}
+
+.tile {
+  background: var(--surface);
+  border-radius: calc(4px * var(--scale));
+  display: flex;
+  gap: calc(8px * var(--scale));
+  overflow: hidden;
+  padding: calc(8px * var(--scale));
+  position: relative;
+}
+
+.input {
+  align-items: flex-end;
+  display: flex;
+  flex: 1;
+  height: calc(70px * var(--scale));
+  justify-content: center;
+  position: relative;
+}
+
+.input label {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  font-weight: 500;
+  left: calc(8px * var(--scale));
+  letter-spacing: 0.04em;
+  position: absolute;
+  text-transform: uppercase;
+  top: calc(6px * var(--scale));
+  white-space: nowrap;
+}
+
+.input input {
+  align-items: center;
+  background: transparent;
+  color: var(--text);
+  font-size: calc(52px * var(--scale));
+  font-weight: 300;
+  height: calc(56px * var(--scale));
+  text-align: center;
+  width: calc(120px * var(--scale));
+}
+
+.input input:is(:focus-visible, :focus) {
+  color: var(--primary);
+}
+
+.progressBar {
+  background: var(--surface-2);
+  bottom: calc(4px * var(--scale));
+  border-radius: calc(4px * var(--scale));
+  height: calc(4px * var(--scale));
+  left: calc(4px * var(--scale));
+  position: absolute;
+  width: calc(100% - calc(8px * var(--scale)));
+}
+
+.progress {
+  background: linear-gradient(
+    to right,
+    var(--surface) -10%,
+    var(--primary) 100%
+  );
+  border-radius: calc(4px * var(--scale));
+  height: calc(4px * var(--scale));
+  left: 0;
+  position: absolute;
+  transition: width 0.5s ease-in-out;
+  width: 0%;
+}
+
+.failed {
+  background: linear-gradient(to right, #ff4d4d 0%, var(--surface) 110%);
+  border-radius: calc(4px * var(--scale));
+  height: calc(4px * var(--scale));
+  right: 0;
+  position: absolute;
+  transition: width 0.5s ease-in-out;
+  width: 0%;
+}
+
+.running {
+  animation: loading 1s infinite ease-in-out;
+}
+
+@keyframes loading {
+  0% {
+    width: 0%;
+  }
+  100% {
+    width: 100%;
+  }
+}
+
+.trigger {
+  align-items: center;
+  background: var(--primary);
+  border-radius: calc(4px * var(--scale));
+  color: var(--bg);
+  cursor: pointer;
+  display: flex;
+  font-size: calc(16px * var(--scale));
+  font-weight: 700;
+  height: calc(36px * var(--scale));
+  justify-content: center;
+  padding: calc(8px * var(--scale));
+  text-align: center;
+  width: 100%;
+  transition:
+    background-color 0.2s ease,
+    opacity 0.2s ease;
+}
+
+.mode {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: calc(8px * var(--scale));
+  justify-content: center;
+}
+
+.mode a {
+  align-items: center;
+  background: var(--surface);
+  border-radius: calc(4px * var(--scale));
+  cursor: pointer;
+  display: flex;
+  font-size: calc(14px * var(--scale));
+  font-weight: 500;
+  height: calc(34px * var(--scale));
+  justify-content: center;
+  width: calc(50% - calc(4px * var(--scale)));
+}
+
+.mode a.active {
+  background: var(--primary);
+  color: var(--bg);
+}
+
+.mode a:hover:not(.active) {
+  color: var(--primary);
+}
+
+.menuItem {
+  align-items: center;
+  background: var(--surface);
+  border-radius: calc(4px * var(--scale));
+  cursor: pointer;
+  display: flex;
+  font-size: calc(14px * var(--scale));
+  font-weight: 500;
+  height: calc(48px * var(--scale));
+  justify-content: space-between;
+  padding: calc(8px * var(--scale));
+  position: relative;
+}
+
+.menuItem a {
+  align-items: center;
+  border-radius: calc(4px * var(--scale));
+  cursor: pointer;
+  display: flex;
+  height: calc(32px * var(--scale));
+  justify-content: center;
+  width: calc(32px * var(--scale));
+}
+
+.menuItem a:hover {
+  color: var(--primary);
+}
+
+.menuItem input {
+  background: var(--bg);
+  border-radius: calc(4px * var(--scale));
+  color: var(--text);
+  cursor: text;
+  font-size: calc(14px * var(--scale));
+  height: calc(32px * var(--scale));
+  padding: calc(4px * var(--scale)) calc(8px * var(--scale));
+}
+
+.menuItem input[type="checkbox"] {
+  accent-color: var(--primary);
+  cursor: pointer;
+  height: calc(20px * var(--scale));
+  margin: calc(4px * var(--scale)) calc(4px * var(--scale));
+  width: calc(20px * var(--scale));
+}
+
+.menuItem select {
+  accent-color: var(--primary);
+  align-items: center;
+  background: var(--bg);
+  border-radius: calc(4px * var(--scale));
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font-size: calc(14px * var(--scale));
+  font-weight: 500;
+  height: calc(32px * var(--scale));
+  justify-content: center;
+  padding: calc(4px * var(--scale));
+  vertical-align: middle;
+}
+
+.menuItem button {
+  align-items: center;
+  background: var(--bg);
+  border-radius: calc(4px * var(--scale));
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  font-size: calc(14px * var(--scale));
+  font-weight: 500;
+  height: calc(32px * var(--scale));
+  justify-content: center;
+  padding: calc(4px * var(--scale)) calc(16px * var(--scale));
+}
+
+.mode a.disabled {
+  pointer-events: none;
+  opacity: 0.5;
+}
+
+.flash-success {
+  background: var(--primary-solid) !important;
+  color: #fff !important;
+}
+
+.flash-failed {
+  background: var(--danger-solid) !important;
+  color: #fff !important;
+}
+
+/* ── Accessibility: restore a visible keyboard focus ring ────────────── */
+/* The global `* { outline: none }` above kills focus for everyone, including
+   keyboard users. Re-add a ring only for keyboard focus via :focus-visible,
+   which out-specifies the universal rule. */
+:focus-visible {
+  outline: calc(2px * var(--scale)) solid var(--primary);
+  outline-offset: calc(2px * var(--scale));
+}
+
+/* ── Disabled controls should look disabled ─────────────────────────── */
+/* Inputs/buttons/selects are toggled to disabled while a run is active
+   (popup.js). Without a style they look interactive, so users try to edit
+   them and think the popup is broken. */
+input:disabled,
+select:disabled,
+button:disabled,
+.trigger:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+/* ── Trigger polish: hover + a "busy" pulse while starting/stopping ──── */
+.trigger:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.trigger.busy {
+  animation: busyPulse 1.1s ease-in-out infinite;
+}
+
+/* While a run is active the primary button becomes a red "Dừng" so the main
+   control (not just the header badge) reflects the running state. */
+.trigger.stopping {
+  background: var(--danger-solid);
+  color: #fff;
+}
+
+.trigger.stopping:hover:not(:disabled) {
+  background: var(--danger);
+}
+
+@keyframes busyPulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* ── Run status line under the search tile ──────────────────────────── */
+.runStatus {
+  color: var(--text-muted);
+  font-size: calc(12px * var(--scale));
+  font-weight: 500;
+  min-height: calc(16px * var(--scale));
+  text-align: center;
+}
+
+.runStatus:empty {
+  display: none;
+}
+
+.runStatus .err {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+/* ── Small inline hint under a field group (units, quick-pick meaning) ─ */
+.fieldHint {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  font-weight: 400;
+  padding: 0 calc(2px * var(--scale));
+}
+
+/* ── Sub-group heading inside the Advanced settings section ─────────── */
+.subGroup {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  padding: calc(4px * var(--scale)) calc(2px * var(--scale)) 0;
+  text-transform: uppercase;
+}
+
+/* ── Destructive buttons: clearly marked, with a two-step confirm ───── */
+/* First click arms the button (adds .confirming via popup.js); a second
+   click within the window performs the irreversible action. */
+.menuItem button.danger {
+  background: var(--bg);
+  box-shadow: inset 0 0 0 calc(1px * var(--scale)) var(--danger);
+  color: var(--danger);
+}
+
+.menuItem button.danger:hover:not(:disabled) {
+  background: var(--danger-bg);
+}
+
+.menuItem button.confirming {
+  background: var(--danger-solid) !important;
+  box-shadow: none;
+  color: #fff !important;
+  font-weight: 700;
+}
+
+/* ── Centralized toast for real feedback (counts, error reasons) ─────── */
+.toast {
+  background: var(--text);
+  border-radius: calc(6px * var(--scale));
+  bottom: calc(12px * var(--scale));
+  color: var(--bg);
+  font-size: calc(12px * var(--scale));
+  font-weight: 500;
+  left: 50%;
+  max-width: calc(90% - calc(16px * var(--scale)));
+  opacity: 0;
+  padding: calc(8px * var(--scale)) calc(12px * var(--scale));
+  pointer-events: none;
+  position: fixed;
+  text-align: center;
+  transition:
+    opacity 0.2s ease,
+    transform 0.2s ease;
+  transform: translate(-50%, calc(8px * var(--scale)));
+  z-index: 10;
+}
+
+.toast.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.toast.toast-error {
+  background: var(--danger-solid);
+  color: #fff;
+}
+
+.toast.toast-success {
+  background: var(--success-solid);
+  color: #fff;
+}
+
+/* ── Subtle depth so tiles/rows read as distinct surfaces ───────────── */
+.tile,
+.menuItem,
+.advToggle {
+  box-shadow: inset 0 0 0 calc(1px * var(--scale)) var(--border);
+}

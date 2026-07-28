@@ -1,0 +1,38 @@
+{
+  "name": "bingreward-tests",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "pretest": "node tests/check_syntax.js",
+    "test": "jest --verbose",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "lint": "eslint js tests eslint.config.js",
+    "lint:fix": "eslint js tests eslint.config.js --fix",
+    "format": "prettier --write \"**/*.{js,json,md,html,css}\"",
+    "format:check": "prettier --check \"**/*.{js,json,md,html,css}\""
+  },
+  "devDependencies": {
+    "eslint": "^9.39.4",
+    "eslint-config-prettier": "^9.1.2",
+    "globals": "^15.15.0",
+    "jest": "^29.7.0",
+    "jest-environment-jsdom": "^29.7.0",
+    "prettier": "^3.9.5"
+  },
+  "jest": {
+    "testEnvironment": "node",
+    "testMatch": [
+      "**/tests/**/*.test.js"
+    ],
+    "collectCoverageFrom": [
+      "js/*.js",
+      "!js/jquery.js",
+      "!js/queries.js"
+    ],
+    "watchPathIgnorePatterns": [
+      "\\.git",
+      "node_modules"
+    ]
+  }
+}

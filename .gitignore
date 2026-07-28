@@ -1,0 +1,26 @@
+node_modules/
+package-lock.json
+*.log
+*.tmp
+*.bak
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Build artifact — the packaged extension, rebuilt on demand (do not commit)
+*.zip
+
+# Local agent/tooling scratch dirs (not part of the extension)
+agent-tools/
+terminals/
+
+# Stray dir created when a shell fails to expand "~" (e.g. a botched clone).
+# The real reference lives at $HOME/refs, not inside the repo.
+~/
+
+# Test coverage output
+coverage/
+
+# Machine-local Claude Code settings (permission allowlist), not shared
+.claude/settings.local.json
