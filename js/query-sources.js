@@ -279,18 +279,37 @@ export function readFreshDynamicTopicCache(
  * Order is deliberately preserved rather than shuffled — Bing ranks
  * suggestions by popularity, and typing progressively less common refinements
  * of a topic is what a person narrowing a search actually does.
+ *
+ * `exclude` is a Set of lowercased queries already searched this run. A seed
+ * can legitimately come round twice (the trending pool is small and its used
+ * set is cleared once exhausted), and its suggestions are then near-identical
+ * to last time — without this filter the run visibly repeats itself.
  */
 export function buildQueryBurst(seed, suggestions, options = {}) {
-  const { rng = Math.random, minSize = 3, maxSize = 6 } = options;
+  const {
+    rng = Math.random,
+    minSize = 3,
+    maxSize = 6,
+    exclude = null,
+  } = options;
   const base = String(seed ?? "")
     .replace(/\s+/g, " ")
     .trim();
   if (!base) return [];
 
-  const clean = normalizeSuggestions(base, suggestions);
+  const isUsed = (text) =>
+    Boolean(exclude) && exclude.has(String(text).toLowerCase());
+
+  const clean = normalizeSuggestions(base, suggestions).filter(
+    (text) => !isUsed(text),
+  );
   const target =
     minSize + Math.floor(rng() * Math.max(1, maxSize - minSize + 1));
-  return [base, ...clean.slice(0, Math.max(0, target - 1))];
+  const refinements = clean.slice(0, Math.max(0, target - 1));
+  // A repeated seed is dropped, but its unused refinements are still good
+  // queries — returning them keeps a partially-fresh topic usable instead of
+  // forcing the caller to roll another seed.
+  return isUsed(base) ? refinements : [base, ...refinements];
 }
 
 /**

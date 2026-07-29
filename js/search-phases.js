@@ -1,3 +1,7 @@
+// How many times the mobile emulation handshake is retried before the mobile
+// phase is abandoned.
+const MOBILE_SIMULATION_ATTEMPTS = 3;
+
 export async function runSearchPhases(
   searches,
   expectedSessionId,
@@ -102,12 +106,39 @@ export async function runSearchPhases(
         await updatePhase("mobile_simulation");
 
         log(`[SEARCH] - Simulating mobile environment...`, "update");
-        const simulated = await simulateFn(tabId);
+        // A failed simulation costs the entire mobile phase (all of the day's
+        // mobile points), and it fails for transient reasons: the debugger
+        // raced the post-clear reload, the tab was still settling. Retry before
+        // writing the phase off.
+        let simulated = false;
+        for (
+          let attempt = 1;
+          attempt <= MOBILE_SIMULATION_ATTEMPTS;
+          attempt++
+        ) {
+          simulated = await simulateFn(tabId);
+          if (simulated) break;
+          if (!isSessionStillActive(expectedSessionId)) break;
+          if (attempt < MOBILE_SIMULATION_ATTEMPTS) {
+            log(
+              `[SEARCH] - Mobile simulation attempt ${attempt}/${MOBILE_SIMULATION_ATTEMPTS} failed; retrying.`,
+              "warning",
+            );
+            // Drop the half-configured debugger session so the retry starts
+            // from a clean attach.
+            try {
+              await detachFn?.(tabId, false);
+            } catch (e) {}
+            await delayFn(shortestDelay, true);
+          }
+        }
         if (!simulated) {
           try {
             await detachFn?.(tabId, false);
           } catch (e) {}
-          throw new Error("Mobile simulation failed.");
+          throw new Error(
+            `Mobile simulation failed after ${MOBILE_SIMULATION_ATTEMPTS} attempts.`,
+          );
         }
 
         await delayFn(shortestDelay, true);

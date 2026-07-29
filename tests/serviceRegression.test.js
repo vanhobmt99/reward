@@ -162,18 +162,15 @@ describe("service regressions", () => {
     );
   });
 
-  test("sign-in warmup clicks run only in the mobile phase, and never repeat the patch click", () => {
-    expect(serviceSource).toContain("let clickedForPatch = false;");
+  test("mobile sign-in is confirmed before searches and after patch cookie clears", () => {
     expect(serviceSource).toContain(
-      "clickedForPatch = await click(interruptible);",
+      '`before the first ${mobilePhase ? "mobile" : "desktop"} search`',
     );
-    // `mobilePhase` is load-bearing, not decoration: clear() defaults to
-    // clearCookies=false, so only the mobile phase is ever signed out. Running
-    // these clicks on desktop navigated the tab to Bing's sign-in area three
-    // times per run while already signed in.
-    expect(serviceSource).toContain(
-      "if (mobilePhase && clearIt && i < 3 && !clickedForPatch)",
-    );
+    expect(serviceSource).toContain('"after the mobile patch cleared cookies"');
+    // A successful trusted hamburger press must still be followed by the
+    // content-script step that inspects/clicks the actual Sign in menu item.
+    expect(serviceSource).toContain("if (config?.runtime?.mobile || !success)");
+    expect(serviceSource).not.toContain("let clickedForPatch = false;");
   });
 
   test("a manual start runs the requested plan regardless of today's counters", () => {

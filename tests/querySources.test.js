@@ -165,6 +165,63 @@ describe("buildQueryBurst", () => {
     expect(buildQueryBurst(null, ["a"], { rng: seqRng([0.5]) })).toEqual([]);
   });
 
+  test("drops refinements already searched earlier in the run", () => {
+    const burst = buildQueryBurst(
+      "iphone 17",
+      ["iphone 17 review", "iphone 17 vs 16", "iphone 17 price"],
+      {
+        rng: seqRng([0.99]),
+        minSize: 4,
+        maxSize: 4,
+        exclude: new Set(["iphone 17 vs 16"]),
+      },
+    );
+    expect(burst).toEqual(["iphone 17", "iphone 17 review", "iphone 17 price"]);
+  });
+
+  test("matches the exclude set case-insensitively", () => {
+    const burst = buildQueryBurst("Laptop", ["Laptop Deals"], {
+      rng: seqRng([0.99]),
+      minSize: 3,
+      maxSize: 3,
+      exclude: new Set(["laptop deals"]),
+    });
+    expect(burst).toEqual(["Laptop"]);
+  });
+
+  test("drops a repeated seed but keeps its unused refinements", () => {
+    const burst = buildQueryBurst(
+      "laptop",
+      ["laptop deals", "laptop docking"],
+      {
+        rng: seqRng([0.99]),
+        minSize: 3,
+        maxSize: 3,
+        exclude: new Set(["laptop"]),
+      },
+    );
+    expect(burst).toEqual(["laptop deals", "laptop docking"]);
+  });
+
+  test("returns nothing when the whole topic run was already searched", () => {
+    const burst = buildQueryBurst("laptop", ["laptop deals"], {
+      rng: seqRng([0.99]),
+      minSize: 3,
+      maxSize: 3,
+      exclude: new Set(["laptop", "laptop deals"]),
+    });
+    expect(burst).toEqual([]);
+  });
+
+  test("without an exclude set nothing is filtered", () => {
+    const burst = buildQueryBurst("laptop", ["laptop deals"], {
+      rng: seqRng([0.99]),
+      minSize: 3,
+      maxSize: 3,
+    });
+    expect(burst).toEqual(["laptop", "laptop deals"]);
+  });
+
   test("the seed is never duplicated inside its own burst", () => {
     const burst = buildQueryBurst("laptop", ["Laptop", "laptop deals"], {
       rng: seqRng([0.99]),

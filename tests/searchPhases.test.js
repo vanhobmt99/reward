@@ -89,6 +89,96 @@ describe("runSearchPhases()", () => {
     expect(searchFn).toHaveBeenCalledWith(3, 10, 20);
   });
 
+  test("retries a failed mobile simulation instead of dropping the phase", async () => {
+    const config = makeConfig({
+      control: { clear: 0, act: 0, preserveRewards: 1 },
+    });
+    const simulateFn = jest
+      .fn()
+      .mockResolvedValueOnce(false)
+      .mockResolvedValueOnce(true);
+    const searchFn = jest.fn().mockResolvedValue(true);
+
+    const result = await runSearchPhases(
+      { desk: 0, mob: 3, min: 10, max: 20 },
+      "session-1",
+      123,
+      {
+        isSessionStillActive: () => true,
+        log: jest.fn(),
+        searchFn,
+        simulateFn,
+        clearFn: jest.fn().mockResolvedValue(true),
+        setConfig: jest.fn().mockResolvedValue(),
+        getConfig: () => config,
+        delayFn: jest.fn().mockResolvedValue(),
+        shortestDelay: 100,
+        detachFn: jest.fn().mockResolvedValue(),
+      },
+    );
+
+    expect(simulateFn).toHaveBeenCalledTimes(2);
+    expect(searchFn).toHaveBeenCalledWith(3, 10, 20);
+    expect(result).toBe(true);
+  });
+
+  test("gives up on the mobile phase after the simulation retries are exhausted", async () => {
+    const config = makeConfig({
+      control: { clear: 0, act: 0, preserveRewards: 1 },
+    });
+    const simulateFn = jest.fn().mockResolvedValue(false);
+    const searchFn = jest.fn().mockResolvedValue(true);
+
+    const result = await runSearchPhases(
+      { desk: 0, mob: 3, min: 10, max: 20 },
+      "session-1",
+      123,
+      {
+        isSessionStillActive: () => true,
+        log: jest.fn(),
+        searchFn,
+        simulateFn,
+        clearFn: jest.fn().mockResolvedValue(true),
+        setConfig: jest.fn().mockResolvedValue(),
+        getConfig: () => config,
+        delayFn: jest.fn().mockResolvedValue(),
+        shortestDelay: 100,
+        detachFn: jest.fn().mockResolvedValue(),
+      },
+    );
+
+    expect(simulateFn).toHaveBeenCalledTimes(3);
+    expect(searchFn).not.toHaveBeenCalled();
+    expect(result).toBe(false);
+  });
+
+  test("stops retrying the mobile simulation once the session is gone", async () => {
+    const config = makeConfig({
+      control: { clear: 0, act: 0, preserveRewards: 1 },
+    });
+    const simulateFn = jest.fn().mockResolvedValue(false);
+    let active = true;
+
+    await runSearchPhases({ desk: 0, mob: 3, min: 10, max: 20 }, "s1", 123, {
+      isSessionStillActive: () => {
+        const wasActive = active;
+        active = false;
+        return wasActive;
+      },
+      log: jest.fn(),
+      searchFn: jest.fn().mockResolvedValue(true),
+      simulateFn,
+      clearFn: jest.fn().mockResolvedValue(true),
+      setConfig: jest.fn().mockResolvedValue(),
+      getConfig: () => config,
+      delayFn: jest.fn().mockResolvedValue(),
+      shortestDelay: 100,
+      detachFn: jest.fn().mockResolvedValue(),
+    });
+
+    expect(simulateFn).toHaveBeenCalledTimes(1);
+  });
+
   test("clears cookies before and after mobile when preserveRewards is disabled", async () => {
     const config = makeConfig({
       control: { clear: 1, act: 0, preserveRewards: 0 },

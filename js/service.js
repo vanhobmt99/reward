@@ -80,6 +80,14 @@ import {
   isCompleteSearchCount,
 } from "/js/search-results.js";
 import {
+  DEFAULT_POINTS_PER_SEARCH,
+  createSearchCreditGoal,
+  isSearchCreditGoalReached,
+  getSearchIterationLimit,
+  shouldContinueSearch,
+  assessSearchCheckpoint,
+} from "/js/search-credit.js";
+import {
   fetchSuggestions,
   buildQueryBurst,
   fetchDynamicTopics,
@@ -115,6 +123,10 @@ let ignoreDailyQuota = false;
 let nicheSession = null;
 // Remaining queries in the current topic run (seed + its live refinements).
 let queryBurst = [];
+// Every query already searched this run, lowercased. `usedDynamicTopics` only
+// guards seed selection and is cleared when the pool runs dry, so without this
+// a returning seed would replay its whole burst verbatim.
+let usedBurstQueries = new Set();
 const dynamicTopicCacheKey = "_dynamicQueryTopicsV1";
 const dynamicTopicFirstWaitMs = 500;
 const dynamicTopicFailureRetryMs = 5 * 60 * 1000;
@@ -135,6 +147,12 @@ const failedSearchSettleDelayMin = 1200;
 const failedSearchSettleDelayMax = 2600;
 // How many times one search is re-attempted before it counts as failed.
 const searchAttempts = 3;
+// Emulation setup is on the critical path of every mobile search, so it gets a
+// budget of its own. 1s (the old `shortestDelay`) was tight enough that a CDP
+// command issued while the tab was still loading routinely timed out and failed
+// the whole search.
+const emulationCommandTimeout = 5000;
+const emulationAttempts = 3;
 const searchRetryDelayMin = 1800;
 const searchRetryDelayMax = 3200;
 // Share of searches that end in opening one of the results, and how long that
@@ -651,6 +669,7 @@ function resetSearchQueryHistory() {
   usedDynamicTopics = new Set();
   nicheSession = null;
   queryBurst = [];
+  usedBurstQueries = new Set();
   // Warm the live topic pool while the automation tab is being prepared.
   // The first query awaits this same promise only when the prefetch is not done.
   void startDynamicTopicPrefetch();
@@ -865,6 +884,11 @@ async function tryStartScheduledRun(source = "SCHEDULE") {
     silent: true,
   });
   if (!hasSearchWork(limitedPlan) && !hasActivityWork()) {
+    // Same reasoning as the busy-session bail below: "nothing left today" is
+    // temporary — the counters reset — so the alarm has to survive it.
+    if (isScheduledModeActive()) {
+      await armScheduleAlarm(config?.schedule?.mode);
+    }
     logs &&
       log(`[${source}] - No runnable work remaining for today.`, "update");
     return false;
@@ -872,9 +896,16 @@ async function tryStartScheduledRun(source = "SCHEDULE") {
 
   const runCheck = RunCoordinator.canStartNewRun();
   if (!runCheck.allowed) {
+    // Re-arm before bailing. `initialise()` clears the "schedule" alarm when a
+    // run starts and only `cleanupAfterRun` re-arms it; without this, a
+    // periodic schedule that loses one race against a manual run is dropped
+    // for good rather than retried.
+    if (isScheduledModeActive()) {
+      await armScheduleAlarm(config?.schedule?.mode);
+    }
     logs &&
       log(
-        `[${source}] - Skipping scheduled run because another session is active (${runCheck.currentSession?.id}).`,
+        `[${source}] - Skipping scheduled run because another session is active (${runCheck.currentSession?.id}); retrying later.`,
         "warning",
       );
     return false;
@@ -1276,6 +1307,12 @@ async function bootstrapConfig() {
 
 const configReady = bootstrapConfig();
 
+// Chrome drops the debugger on its own (the user dismissed the "is being
+// debugged" infobar, a renderer swap, DevTools opening). During the mobile
+// phase that silently removes the UA/device overrides, so every remaining
+// search runs as desktop and earns nothing towards the mobile counter. Put the
+// overrides back instead of only logging the detach.
+let reattachInFlight = false;
 chrome.debugger.onDetach.addListener((source, reason) => {
   const tabId = Number(source?.tabId);
   if (!tabId) return;
@@ -1284,6 +1321,46 @@ chrome.debugger.onDetach.addListener((source, reason) => {
       `[DEBUGGER] Detached from tab ${tabId}: ${reason || "unknown"}`,
       "warning",
     );
+
+  // `target_closed` means the tab is gone; re-attaching is impossible. Every
+  // other reason is recoverable while the mobile phase is still running on
+  // this exact tab.
+  const shouldReattach =
+    reason !== "target_closed" &&
+    !reattachInFlight &&
+    Boolean(config?.runtime?.running) &&
+    Boolean(config?.runtime?.mobile) &&
+    Number(config?.runtime?.rsaTab) === tabId;
+  if (!shouldReattach) return;
+
+  reattachInFlight = true;
+  (async () => {
+    try {
+      // Let Chrome finish tearing the old session down before attaching again.
+      await delay(shortestDelay, false);
+      if (
+        !config?.runtime?.running ||
+        !config?.runtime?.mobile ||
+        Number(config?.runtime?.rsaTab) !== tabId
+      ) {
+        return;
+      }
+      const restored = await ensureEmulation(tabId);
+      log(
+        restored
+          ? `[DEBUGGER] Re-attached and restored mobile emulation for tab ${tabId}.`
+          : `[DEBUGGER] Could not restore mobile emulation for tab ${tabId} after detach.`,
+        restored ? "success" : "error",
+      );
+    } catch (error) {
+      log(
+        `[DEBUGGER] Error while restoring emulation for tab ${tabId}: ${error.message}`,
+        "error",
+      );
+    } finally {
+      reattachInFlight = false;
+    }
+  })();
 });
 
 chrome.storage.onChanged.addListener(async (changes, area) => {
@@ -1811,9 +1888,10 @@ async function toggleSimulate() {
   }
 }
 
-async function ensureEmulation(tabId) {
-  if (!config?.runtime?.mobile) return true;
-  tabId = Number(tabId);
+// One pass of "make sure this tab still looks like a phone". Separated from the
+// retry wrapper below so a transient failure (a CDP command racing a page load)
+// can be retried without duplicating the command list.
+async function applyEmulationOnce(tabId) {
   try {
     const isAttached = await isDebuggerAttached(tabId);
     if (!isAttached) {
@@ -1838,7 +1916,7 @@ async function ensureEmulation(tabId) {
         "Emulation.setDeviceMetricsOverride",
         deviceMetrics,
       ),
-      shortestDelay,
+      emulationCommandTimeout,
     );
     await race(
       chrome.debugger.sendCommand(
@@ -1846,7 +1924,7 @@ async function ensureEmulation(tabId) {
         "Network.setUserAgentOverride",
         buildUAOverride(config?.device),
       ),
-      shortestDelay,
+      emulationCommandTimeout,
     );
     await race(
       chrome.debugger.sendCommand(
@@ -1858,7 +1936,7 @@ async function ensureEmulation(tabId) {
           configuration: "mobile",
         },
       ),
-      shortestDelay,
+      emulationCommandTimeout,
     );
     await race(
       chrome.debugger.sendCommand(
@@ -1866,7 +1944,7 @@ async function ensureEmulation(tabId) {
         "Emulation.setEmitTouchEventsForMouse",
         { enabled: true, configuration: "mobile" },
       ),
-      shortestDelay,
+      emulationCommandTimeout,
     );
     logs &&
       log(
@@ -1875,12 +1953,47 @@ async function ensureEmulation(tabId) {
       );
     return true;
   } catch (error) {
-    log(
-      `[EMULATION] - Error ensuring emulation for tab ${tabId}: ${error.message}`,
-      "error",
-    );
+    logs &&
+      log(
+        `[EMULATION] - Attempt to ensure emulation for tab ${tabId} failed: ${error.message}`,
+        "warning",
+      );
     return false;
   }
+}
+
+/**
+ * Verify (and re-apply) the mobile emulation overrides for `tabId`.
+ *
+ * Every failure here costs a whole search: `perform()` bails out when this
+ * returns false, so a single CDP command that raced a page load used to burn a
+ * search's worth of points. Chrome also detaches the debugger on its own
+ * (infobar dismissed, tab navigating, renderer swap), which makes the first
+ * attempt after such an event fail by definition. Retry before giving up.
+ */
+async function ensureEmulation(tabId) {
+  if (!config?.runtime?.mobile) return true;
+  tabId = Number(tabId);
+  for (let attempt = 1; attempt <= emulationAttempts; attempt++) {
+    if (await applyEmulationOnce(tabId)) return true;
+    if (attempt < emulationAttempts) {
+      logs &&
+        log(
+          `[EMULATION] Retrying emulation setup for tab ${tabId} (attempt ${attempt + 1}/${emulationAttempts}).`,
+          "warning",
+        );
+      // Drop any half-attached debugger session so the next attempt starts from
+      // a clean attach rather than reusing a socket Chrome is already tearing
+      // down.
+      await detach(tabId, false).catch(() => {});
+      await delay(shortestDelay, false);
+    }
+  }
+  log(
+    `[EMULATION] - Could not ensure mobile emulation for tab ${tabId} after ${emulationAttempts} attempts.`,
+    "error",
+  );
+  return false;
 }
 
 async function enableDomains(tabId) {
@@ -2135,14 +2248,13 @@ async function click(interruptible = true) {
     log(`[CLICK] - Error during click operation: ${error.message}`, "error");
   }
 
-  // Fallback login only runs when debugger click didn't succeed
-  if (!success) {
-    logs &&
-      log(
-        `[CLICK] - Applying fallback method for login for tab ${tabId}.`,
-        "update",
-      );
-    await sendTabMessage(
+  // Opening the mobile hamburger is only the first half of signing in. Always
+  // let the content script inspect the rendered menu and press its Sign in link;
+  // previously this ran only when the hamburger click failed, leaving the normal
+  // mobile path logged out after its pre-search cookie clear.
+  if (config?.runtime?.mobile || !success) {
+    logs && log(`[CLICK] - Completing login flow for tab ${tabId}.`, "update");
+    const loginResponse = await sendTabMessage(
       tabId,
       {
         action: "login",
@@ -2150,6 +2262,7 @@ async function click(interruptible = true) {
       },
       "CLICK",
     );
+    success = success || Boolean(loginResponse?.success);
     await delay(shortestDelay, interruptible);
   }
   if (needPatch) {
@@ -2219,7 +2332,18 @@ async function refillQueryBurst() {
   // No `mkt` override: Bing infers the market from the request IP, which is by
   // definition the one consistent with where the searches are coming from.
   const suggestions = await fetchSuggestions(seed);
-  queryBurst = buildQueryBurst(seed, suggestions);
+  queryBurst = buildQueryBurst(seed, suggestions, {
+    exclude: usedBurstQueries,
+  });
+
+  if (queryBurst.length === 0) {
+    logs &&
+      log(
+        `[QUERY] - Topic "${seed}" only produced queries already searched this run; rolling another.`,
+        "update",
+      );
+    return false;
+  }
 
   if (suggestions.length > 0) {
     logs &&
@@ -2237,12 +2361,19 @@ async function refillQueryBurst() {
   return queryBurst.length > 0;
 }
 
+// A refill can come back empty because the seed it rolled was already searched
+// this run. That is a reason to roll again, not to give up on the search — but
+// bound the attempts so an exhausted pool cannot spin here.
+const MAX_REFILL_ATTEMPTS = 3;
+
 async function nextBurstQuery() {
-  if (queryBurst.length === 0) {
-    const refilled = await refillQueryBurst();
-    if (!refilled) return "";
+  for (let attempt = 0; queryBurst.length === 0; attempt++) {
+    if (attempt >= MAX_REFILL_ATTEMPTS) return "";
+    await refillQueryBurst();
   }
-  return queryBurst.shift() || "";
+  const next = queryBurst.shift() || "";
+  if (next) usedBurstQueries.add(next.toLowerCase());
+  return next;
 }
 
 // Backspace has to go through dispatchKeyEvent — Input.insertText can only add
@@ -2682,8 +2813,11 @@ async function search(searches, min, max, interruptible = true) {
     const total = Number(config?.runtime?.total) || searches || 1;
     await chrome.action.setBadgeText({
       text:
-        Math.round(
-          ((config.runtime.done + config.runtime.failed) / total) * 100,
+        Math.min(
+          100,
+          Math.round(
+            ((config.runtime.done + config.runtime.failed) / total) * 100,
+          ),
         ) + "%",
     });
   };
@@ -2705,10 +2839,8 @@ async function search(searches, min, max, interruptible = true) {
   // ── Point-crediting checkpoint ─────────────────────────────────────────────
   // A search that navigated successfully can still earn nothing (half-logged-in
   // session after the mobile cookie clear, silently detached debugger dropping
-  // the mobile UA, Bing rate limiting). Every few successful searches, compare
-  // the real Rewards counter against our local progress; if the counter is
-  // frozen while we kept searching, recover the session in-place (the same
-  // things a manual restart fixes) and grant make-up searches.
+  // the mobile UA, Bing rate limiting). Compare the real Rewards counter against
+  // our local progress and use a bounded make-up budget for missing credit.
   const mobilePhase = Boolean(config?.runtime?.mobile);
   const counterField = mobilePhase ? "mobProgress" : "pcProgress";
   const counterMaxField = mobilePhase ? "mobMax" : "pcMax";
@@ -2717,33 +2849,59 @@ async function search(searches, min, max, interruptible = true) {
   // checkpoint is ~17s spent earning nothing. Tightening the interval costs two
   // extra getuserinfo calls per phase and saves up to two wasted searches.
   const CHECKPOINT_EVERY = 4;
-  const MAX_STALL_RECOVERIES = 2;
+  // 3, not 2: the Rewards counter lags the searches that fed it, so a stalled
+  // reading is often just a slow API and not a dead session. Two consecutive
+  // stalls used to end the phase outright and drop every remaining search;
+  // requiring a third costs one extra recovery round and avoids abandoning a
+  // run that was still being credited.
+  const MAX_STALL_RECOVERIES = 3;
+  const POINT_SETTLE_RECHECKS = 2;
   let checkpointSnapshot = null;
+  let latestRewardsSnapshot = null;
+  let creditGoal = null;
   let checkpointDone = 0;
   let checkpointDelayBoost = 1;
-  let stallRecoveries = 0;
+  let consecutiveStallRecoveries = 0;
+  const iterationLimit = getSearchIterationLimit(searches);
   // Set when the counter says there is nothing left to earn — either the daily
   // quota is full, or Bing has stopped crediting and recovery did not help.
   // Both mean "stop", and neither is a failure of the search phase.
   let earlyStopReason = null;
 
-  const recoverFromStall = async () => {
-    stallRecoveries++;
-    logs &&
-      log(
-        `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter frozen while searches kept running; recovering session (attempt ${stallRecoveries}).`,
-        "warning",
-      );
-    if (!(await checkRewardsApiSession())) {
+  const ensureRewardsSessionForSearches = async (reason) => {
+    if (await checkRewardsApiSession()) return true;
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
       logs &&
         log(
-          "[SEARCH] Rewards session not active during searches; attempting re-login.",
+          `[SEARCH] Rewards session unavailable ${reason}; re-login attempt ${attempt}/3.`,
           "warning",
         );
-      if (clearIt) {
-        await click(interruptible);
-        await delay(shortestDelay, interruptible);
+      await chrome.tabs.update(tabId, { url: bing, active: true });
+      await wait(tabId);
+      if (mobilePhase && !(await ensureEmulation(tabId))) {
+        continue;
       }
+      await click(interruptible);
+      await delay(mediumDelay, interruptible);
+      if (await checkRewardsApiSession()) return true;
+    }
+    return false;
+  };
+
+  const recoverFromStall = async () => {
+    consecutiveStallRecoveries++;
+    logs &&
+      log(
+        `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter frozen while searches kept running; recovering session (attempt ${consecutiveStallRecoveries}).`,
+        "warning",
+      );
+    if (
+      !(await ensureRewardsSessionForSearches(
+        "while checking credited searches",
+      ))
+    ) {
+      return false;
     }
     if (mobilePhase) {
       // Re-attach the debugger and re-apply UA/device overrides in case they
@@ -2754,38 +2912,80 @@ async function search(searches, min, max, interruptible = true) {
     await wait(tabId);
     await delay(shortestDelay, interruptible);
     checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
+    return true;
+  };
+
+  const fetchSettledRewardsSnapshot = async () => {
+    let snapshot = await fetchRewardsSnapshot();
+    if (!snapshot || !checkpointSnapshot) return snapshot;
+
+    for (let attempt = 0; attempt < POINT_SETTLE_RECHECKS; attempt++) {
+      const current = Number(snapshot[counterField]);
+      const previous = Number(checkpointSnapshot[counterField]);
+      if (current > previous) break;
+      await delay(mediumDelay, interruptible);
+      const retry = await fetchRewardsSnapshot();
+      if (retry) snapshot = retry;
+    }
+    return snapshot;
   };
 
   const verifySearchProgress = async () => {
-    const snapshot = await fetchRewardsSnapshot();
+    const snapshot = await fetchSettledRewardsSnapshot();
     if (!snapshot) return;
     if (!checkpointSnapshot) {
       checkpointSnapshot = snapshot;
+      latestRewardsSnapshot = snapshot;
       checkpointDone = successfulSearches;
       return;
     }
-    const progressed =
-      Number(snapshot[counterField]) - Number(checkpointSnapshot[counterField]);
-    const counterMax = Number(snapshot[counterMaxField]) || 0;
-    const quotaFull =
-      counterMax > 0 && Number(snapshot[counterField]) >= counterMax;
+    const successfulSinceCheckpoint = successfulSearches - checkpointDone;
+    if (successfulSinceCheckpoint <= 0) {
+      checkpointSnapshot = snapshot;
+      latestRewardsSnapshot = snapshot;
+      return;
+    }
+    const { progressed, expected, missingPoints, quotaFull } =
+      assessSearchCheckpoint({
+        before: checkpointSnapshot,
+        after: snapshot,
+        counterField,
+        counterMaxField,
+        successfulSinceCheckpoint,
+        pointsPerSearch: DEFAULT_POINTS_PER_SEARCH,
+      });
     if (quotaFull && !ignoreDailyQuota) {
       earlyStopReason = "quota_full";
       logs &&
         log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} search counter reached max (${snapshot[counterField]}/${counterMax}); stopping this phase.`,
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} search counter reached max (${snapshot[counterField]}/${snapshot[counterMaxField]}); stopping this phase.`,
           "success",
         );
     } else if (quotaFull) {
-      // Manual run: the counter is full and these searches earn nothing, but
-      // the user asked for them explicitly, so keep going and say so plainly.
       logs &&
         log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter is already at max (${snapshot[counterField]}/${counterMax}); continuing anyway because this is a manual run.`,
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter is already at max (${snapshot[counterField]}/${snapshot[counterMaxField]}).`,
           "warning",
         );
-    } else if (progressed <= 0 && stallRecoveries < MAX_STALL_RECOVERIES) {
-      await recoverFromStall();
+    } else if (
+      progressed <= 0 &&
+      (getScoreDelta(checkpointSnapshot, snapshot) || 0) > 0
+    ) {
+      // The per-counter field is stale but the account balance moved, so the
+      // searches ARE being credited — Bing simply has not published the search
+      // counter yet. Treating this as a stall would abandon a healthy run.
+      consecutiveStallRecoveries = 0;
+      logs &&
+        log(
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter is lagging, but the points balance moved; continuing.`,
+          "update",
+        );
+    } else if (
+      progressed <= 0 &&
+      consecutiveStallRecoveries < MAX_STALL_RECOVERIES
+    ) {
+      const recovered = await recoverFromStall();
+      if (!recovered) earlyStopReason = "session_unavailable";
     } else if (progressed <= 0) {
       // Recovery has already been tried the allowed number of times and the
       // counter still has not moved. Searching harder is the wrong response:
@@ -2795,10 +2995,21 @@ async function search(searches, min, max, interruptible = true) {
       earlyStopReason = "plateau";
       logs &&
         log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${stallRecoveries} recovery attempts; stopping instead of searching further.`,
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} consecutive recovery attempts; stopping instead of searching further.`,
           "warning",
         );
     } else {
+      consecutiveStallRecoveries = 0;
+      if (missingPoints > 0) {
+        checkpointDelayBoost = Math.min(checkpointDelayBoost * 1.5, 4);
+        logs &&
+          log(
+            `[SEARCH] Counter increased by ${progressed}/${expected} expected points; ${missingPoints} point(s) will be covered by make-up searches.`,
+            "warning",
+          );
+      } else {
+        checkpointDelayBoost = Math.max(1, checkpointDelayBoost / 1.5);
+      }
       logs &&
         log(
           `[SEARCH] Counter check OK: +${progressed} since last checkpoint.`,
@@ -2806,6 +3017,7 @@ async function search(searches, min, max, interruptible = true) {
         );
     }
     checkpointSnapshot = snapshot;
+    latestRewardsSnapshot = snapshot;
     checkpointDone = successfulSearches;
   };
   // ───────────────────────────────────────────────────────────────────────────
@@ -2836,10 +3048,51 @@ async function search(searches, min, max, interruptible = true) {
   };
 
   try {
+    if (
+      !(await ensureRewardsSessionForSearches(
+        `before the first ${mobilePhase ? "mobile" : "desktop"} search`,
+      ))
+    ) {
+      earlyStopReason = "session_unavailable";
+      logs &&
+        log(
+          `[SEARCH] ${mobilePhase ? "Mobile" : "Desktop"} Rewards session could not be confirmed; stopping before uncredited searches are sent.`,
+          "error",
+        );
+      return false;
+    }
+
     checkpointSnapshot = await fetchRewardsSnapshot();
-    for (let i = 0; i < searches; i++) {
-      let clickedForPatch = false;
+    latestRewardsSnapshot = checkpointSnapshot;
+    creditGoal = createSearchCreditGoal(
+      checkpointSnapshot,
+      counterField,
+      counterMaxField,
+      searches,
+    );
+    let attemptedIterations = 0;
+    while (
+      shouldContinueSearch({
+        attemptedIterations,
+        requestedSearches: searches,
+        successfulSearches,
+        iterationLimit,
+        creditGoal,
+        snapshot: latestRewardsSnapshot,
+        counterField,
+      })
+    ) {
+      const i = attemptedIterations;
+      attemptedIterations++;
       let browsedMs = 0;
+      if (i >= searches) {
+        config.runtime.total = (Number(config.runtime.total) || 0) + 1;
+        logs &&
+          log(
+            `[SEARCH] Starting make-up search ${i - searches + 1}/${iterationLimit - searches} because the Rewards counter is still short.`,
+            "warning",
+          );
+      }
       if (interruptible && !config?.runtime?.running) {
         logs &&
           log("[SEARCH] Interrupted, skipping search operation.", "warning");
@@ -2861,23 +3114,16 @@ async function search(searches, min, max, interruptible = true) {
           );
         await clear(interruptible, true);
         await delay(shortestDelay, interruptible);
-        clickedForPatch = await click(interruptible);
-        await delay(shortestDelay, interruptible);
+        if (
+          !(await ensureRewardsSessionForSearches(
+            "after the mobile patch cleared cookies",
+          ))
+        ) {
+          earlyStopReason = "session_unavailable";
+          break;
+        }
       }
       const readDelay = getReadDelay();
-      // Re-establish the sign-in only in the phase that actually destroyed it.
-      // `clear()` defaults to clearCookies=false and logs "preserving auth
-      // storage", so the desktop phase is never signed out — clicking Bing's
-      // sign-in area there navigated away from the search flow for no reason,
-      // three times per run.
-      if (mobilePhase && clearIt && i < 3 && !clickedForPatch) {
-        await chrome.tabs.update(tabId, {
-          active: true,
-        });
-        await delay(shortestDelay, interruptible);
-        await click(interruptible);
-        await delay(shortestDelay, interruptible);
-      }
       // A search can fail for reasons that clear up on their own: the input was
       // not ready, the navigation raced the page load, the tab was still
       // settling after a cookie clear. Writing the whole iteration off on the
@@ -2992,28 +3238,20 @@ async function search(searches, min, max, interruptible = true) {
           );
         await delay(pause, interruptible);
       }
-      // Right after the mobile cookie clear the login is re-established by the
-      // sign-in clicks of the first iterations; verify it actually took before
-      // burning through the whole phase logged out.
-      if (searched && mobilePhase && clearIt && i === 3) {
-        if (!(await checkRewardsApiSession())) {
-          logs &&
-            log(
-              "[SEARCH] Mobile session not confirmed after re-login clicks; retrying sign-in.",
-              "warning",
-            );
-          await click(interruptible);
-          await delay(shortestDelay, interruptible);
-        }
-      }
       if (
-        searched &&
-        successfulSearches - checkpointDone >= CHECKPOINT_EVERY &&
-        i < searches - 1
+        (searched && successfulSearches - checkpointDone >= CHECKPOINT_EVERY) ||
+        attemptedIterations >= searches
       ) {
         await verifySearchProgress();
         if (earlyStopReason) break;
       }
+    }
+    if (
+      !earlyStopReason &&
+      successfulSearches > checkpointDone &&
+      checkpointSnapshot
+    ) {
+      await verifySearchProgress();
     }
   } finally {
     if (searchKeepaliveCancel) {
@@ -3049,13 +3287,42 @@ async function search(searches, min, max, interruptible = true) {
       );
     return true;
   }
-  if (earlyStopReason === "plateau") {
+  if (
+    earlyStopReason === "plateau" ||
+    earlyStopReason === "session_unavailable"
+  ) {
     logs &&
       log(
-        `[SEARCH] Phase stopped early at ${successfulSearches}/${searches} searches: points were no longer being credited.`,
+        `[SEARCH] Phase stopped early at ${successfulSearches}/${searches} searches: ${
+          earlyStopReason === "session_unavailable"
+            ? "the Rewards session was unavailable"
+            : "points were no longer being credited"
+        }.`,
         "warning",
       );
     return false;
+  }
+  if (creditGoal) {
+    if (
+      !isSearchCreditGoalReached(
+        creditGoal,
+        latestRewardsSnapshot,
+        counterField,
+      )
+    ) {
+      logs &&
+        log(
+          `[SEARCH] Phase incomplete after bounded make-up searches: Rewards counter ${latestRewardsSnapshot?.[counterField] ?? "unknown"}/${creditGoal.target}.`,
+          "warning",
+        );
+      return false;
+    }
+    logs &&
+      log(
+        `[SEARCH] Rewards credit target reached: ${latestRewardsSnapshot[counterField]}/${creditGoal.target}.`,
+        "success",
+      );
+    return true;
   }
   if (!isCompleteSearchCount(successfulSearches, searches)) {
     logs &&
@@ -4443,14 +4710,21 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
+        // Claim the session in the same synchronous step as the check above.
+        // Refreshing counters first left an `await` between "nobody is running"
+        // and "we are running", during which a schedule alarm could take the
+        // slot — the user then got a bare "Failed to start session" for a
+        // button press that was valid when they made it.
+        const searchSession = RunCoordinator.startNewSession("search");
+        if (!searchSession) {
+          reply({ success: false, message: "Failed to start session." });
+          return;
+        }
+
         config.search = normalizeSearchPlan(message?.searches || config.search);
-        // Counters are refreshed for the popup's display only. A manual start
-        // runs the plan the user asked for even when today's counters are
-        // already complete — being told "nothing remaining" after pressing
-        // Search is not a useful answer to an explicit request.
-        await refreshSearchCountersFromRewards();
 
         if (!hasSearchWork(config.search) && !hasActivityWork()) {
+          await RunCoordinator.stopCurrentSession("empty_plan");
           log(
             "Nothing to run: the plan is empty and activities are off.",
             "error",
@@ -4463,13 +4737,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           return;
         }
 
-        const searchSession = RunCoordinator.startNewSession("search");
-        if (!searchSession) {
-          reply({ success: false, message: "Failed to start session." });
-          return;
-        }
-
         await set(config);
+
+        // Counters are refreshed for the popup's display only. A manual start
+        // runs the plan the user asked for even when today's counters are
+        // already complete — being told "nothing remaining" after pressing
+        // Search is not a useful answer to an explicit request. Safe to do
+        // after claiming the session: the run is already ours.
+        await refreshSearchCountersFromRewards();
 
         const startLabel = hasSearchWork(config.search)
           ? `${config.search.desk} desktop and ${config.search.mob} mobile`

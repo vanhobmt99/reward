@@ -3,6 +3,7 @@ const { loadEsmModule } = require("./esm-loader.js");
 const {
   findFirstNumberByKey,
   getCounterValue,
+  pickActiveCounter,
   sumCounterProgress,
   buildRewardsSnapshot,
   getScoreDelta,
@@ -54,6 +55,43 @@ describe("getCounterValue", () => {
 
   test("returns 0 when key missing", () => {
     expect(getCounterValue([{ attributes: {} }], "progress")).toBe(0);
+  });
+
+  test("reads the tier that still has room, not blindly the first entry", () => {
+    const tiers = [
+      { attributes: { progress: 30, max: 30 } },
+      { attributes: { progress: 12, max: 90 } },
+    ];
+    expect(getCounterValue(tiers, "progress")).toBe(12);
+    expect(getCounterValue(tiers, "max")).toBe(90);
+  });
+
+  test("falls back to the last tier when every tier is complete", () => {
+    const tiers = [
+      { attributes: { progress: 30, max: 30 } },
+      { attributes: { progress: 90, max: 90 } },
+    ];
+    expect(getCounterValue(tiers, "progress")).toBe(90);
+    expect(getCounterValue(tiers, "max")).toBe(90);
+  });
+
+  test("skips a null entry rather than reporting 0", () => {
+    expect(getCounterValue([null, { progress: 7, max: 90 }], "progress")).toBe(
+      7,
+    );
+  });
+});
+
+describe("pickActiveCounter", () => {
+  test("returns null for empty or non-array input", () => {
+    expect(pickActiveCounter([])).toBeNull();
+    expect(pickActiveCounter(null)).toBeNull();
+    expect(pickActiveCounter([null])).toBeNull();
+  });
+
+  test("returns the same entry that progress and max are read from", () => {
+    const active = { attributes: { progress: 12, max: 90 } };
+    expect(pickActiveCounter([{ progress: 30, max: 30 }, active])).toBe(active);
   });
 });
 

@@ -28,13 +28,38 @@ export function findFirstNumberByKey(source, names) {
   return null;
 }
 
-export function getCounterValue(arr, key) {
-  if (!Array.isArray(arr) || arr.length === 0) return 0;
-  const item = arr[0];
-  if (item == null) return 0; // guard a literal null first element
+function readCounterField(item, key) {
+  if (item == null) return 0;
   const attr = item.attributes || item;
   const value = Number(attr[key] ?? item[key] ?? 0);
   return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Pick the counter entry that describes today's earning state.
+ *
+ * Bing returns `counters.pcSearch` / `counters.mobileSearch` as an array with
+ * one entry per point tier, and the entry order is not guaranteed to put the
+ * live tier first. Reading `arr[0]` blindly could report a completed tier's
+ * `progress`/`max` — which reads as "quota full" and stops the search phase
+ * while points are still available. Prefer the first tier that still has room;
+ * when every tier is complete, the last entry is the one that describes the day.
+ *
+ * Exported so `progress` and `max` are always read off the SAME entry.
+ */
+export function pickActiveCounter(arr) {
+  if (!Array.isArray(arr)) return null;
+  const items = arr.filter((item) => item != null);
+  if (items.length === 0) return null;
+  const active = items.find(
+    (item) =>
+      readCounterField(item, "max") > readCounterField(item, "progress"),
+  );
+  return active || items[items.length - 1];
+}
+
+export function getCounterValue(arr, key) {
+  return readCounterField(pickActiveCounter(arr), key);
 }
 
 export function sumCounterProgress(counters) {

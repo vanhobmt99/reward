@@ -337,6 +337,43 @@ describe("Rewards counter helpers", () => {
     );
   });
 
+  test("is not done while any tier still has room, whatever order Bing sends", () => {
+    // Regression: the live 18/60 mobile tier was ignored because a completed
+    // tier happened to sit at index 0, so the run skipped searching entirely.
+    const mobileTiers = [
+      { attributes: { complete: 1, progress: 30, max: 30 } },
+      { attributes: { complete: 0, progress: 18, max: 60 } },
+    ];
+    expect(isRewardsSearchCounterComplete(mobileTiers)).toBe(false);
+    expect(
+      getRewardsSearchCounterDone(
+        { mobileSearch: mobileTiers },
+        "mobileSearch",
+      ),
+    ).toBe(0);
+  });
+
+  test("is done only once every tier is full", () => {
+    expect(
+      isRewardsSearchCounterComplete([
+        { attributes: { progress: 30, max: 30 } },
+        { attributes: { progress: 90, max: 90 } },
+      ]),
+    ).toBe(true);
+  });
+
+  test("ignores a stale complete flag on a tier that still has room", () => {
+    expect(
+      isRewardsSearchCounterComplete([{ complete: 1, progress: 18, max: 60 }]),
+    ).toBe(false);
+  });
+
+  test("treats an empty or all-null counter array as not done", () => {
+    expect(isRewardsSearchCounterComplete([])).toBe(false);
+    expect(isRewardsSearchCounterComplete([null])).toBe(false);
+    expect(isRewardsSearchCounterComplete(null)).toBe(false);
+  });
+
   test("isDailySearchCounterDone only accepts completed flags", () => {
     expect(isDailySearchCounterDone(1)).toBe(true);
     expect(isDailySearchCounterDone(0)).toBe(false);

@@ -266,22 +266,53 @@ function applyConfigDefaults(target, stored) {
   return target;
 }
 
-function getRewardsCounterField(counterArray, key) {
-  if (!Array.isArray(counterArray) || counterArray.length === 0) return 0;
-  const item = counterArray[0];
-  if (item == null) return 0; // guard a literal null first element
+function readRewardsCounterAttr(item, key) {
+  if (item == null) return 0;
   const attr = item.attributes || item;
   const value = Number(attr[key] ?? item[key] ?? 0);
   return Number.isFinite(value) ? value : 0;
 }
 
+/**
+ * Pick the counter entry that describes today's earning state.
+ *
+ * Bing returns `counters.pcSearch` / `counters.mobileSearch` as an array with
+ * one entry per point tier, in no guaranteed order. Reading `counterArray[0]`
+ * blindly can land on a tier that is already complete while the live tier still
+ * has room — which marks the whole daily counter "done" and makes the run skip
+ * searching entirely.
+ *
+ * Same rule as `pickActiveCounter` in js/rewards-metrics.js. Duplicated rather
+ * than imported because js/utils.js is evaluated by the test sandbox, which
+ * does not resolve `import` statements.
+ */
+function pickActiveRewardsCounter(counterArray) {
+  if (!Array.isArray(counterArray)) return null;
+  const items = counterArray.filter((item) => item != null);
+  if (items.length === 0) return null;
+  const active = items.find(
+    (item) =>
+      readRewardsCounterAttr(item, "max") >
+      readRewardsCounterAttr(item, "progress"),
+  );
+  return active || items[items.length - 1];
+}
+
+function getRewardsCounterField(counterArray, key) {
+  return readRewardsCounterAttr(pickActiveRewardsCounter(counterArray), key);
+}
+
 function isRewardsSearchCounterComplete(counterArray) {
-  const complete = getRewardsCounterField(counterArray, "complete");
-  const progress = getRewardsCounterField(counterArray, "progress");
-  const max = getRewardsCounterField(counterArray, "max");
-  if (complete >= 1) return true;
-  if (max > 0 && progress >= max) return true;
-  return false;
+  const active = pickActiveRewardsCounter(counterArray);
+  if (!active) return false;
+  const progress = readRewardsCounterAttr(active, "progress");
+  const max = readRewardsCounterAttr(active, "max");
+  // A tier that still has room means the day is NOT done, whatever a stale
+  // `complete` flag on that entry claims. Checking this first is what stops an
+  // 18/60 mobile counter from being reported as finished.
+  if (max > 0 && progress < max) return false;
+  if (readRewardsCounterAttr(active, "complete") >= 1) return true;
+  return max > 0 && progress >= max;
 }
 
 function getRewardsSearchCounterDone(counters, name) {
