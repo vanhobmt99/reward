@@ -2896,6 +2896,18 @@ async function search(searches, min, max, interruptible = true) {
         `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter frozen while searches kept running; recovering session (attempt ${consecutiveStallRecoveries}).`,
         "warning",
       );
+    // A manual desktop run is an explicit "search now" command. Do not divert
+    // it into the account-menu click flow merely because the Rewards API is
+    // delayed or temporarily unavailable; slow down and keep the search tab on
+    // Bing instead. Mobile is different because its cookie clear genuinely
+    // requires a login recovery before points can register.
+    if (ignoreDailyQuota && !mobilePhase) {
+      await chrome.tabs.update(tabId, { url: bing, active: true });
+      await wait(tabId);
+      await delay(shortestDelay, interruptible);
+      checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
+      return true;
+    }
     if (
       !(await ensureRewardsSessionForSearches(
         "while checking credited searches",
@@ -2985,19 +2997,35 @@ async function search(searches, min, max, interruptible = true) {
       consecutiveStallRecoveries < MAX_STALL_RECOVERIES
     ) {
       const recovered = await recoverFromStall();
-      if (!recovered) earlyStopReason = "session_unavailable";
+      if (!recovered && !ignoreDailyQuota) {
+        earlyStopReason = "session_unavailable";
+      } else if (!recovered) {
+        logs &&
+          log(
+            "[SEARCH] Forced manual run: login recovery failed, continuing requested searches.",
+            "warning",
+          );
+      }
     } else if (progressed <= 0) {
       // Recovery has already been tried the allowed number of times and the
       // counter still has not moved. Searching harder is the wrong response:
       // the account is not being credited, and continuing only adds volume to
       // a session Bing is already ignoring. Stop and leave the rest for the
       // next run.
-      earlyStopReason = "plateau";
-      logs &&
-        log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} consecutive recovery attempts; stopping instead of searching further.`,
-          "warning",
-        );
+      if (ignoreDailyQuota) {
+        logs &&
+          log(
+            `[SEARCH] Forced manual run: ${mobilePhase ? "mobile" : "PC"} counter is still frozen; continuing the requested search plan.`,
+            "warning",
+          );
+      } else {
+        earlyStopReason = "plateau";
+        logs &&
+          log(
+            `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} consecutive recovery attempts; stopping instead of searching further.`,
+            "warning",
+          );
+      }
     } else {
       consecutiveStallRecoveries = 0;
       if (missingPoints > 0) {
@@ -3048,18 +3076,28 @@ async function search(searches, min, max, interruptible = true) {
   };
 
   try {
-    if (
-      !(await ensureRewardsSessionForSearches(
-        `before the first ${mobilePhase ? "mobile" : "desktop"} search`,
-      ))
-    ) {
-      earlyStopReason = "session_unavailable";
-      logs &&
-        log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "Desktop"} Rewards session could not be confirmed; stopping before uncredited searches are sent.`,
-          "error",
-        );
-      return false;
+    // Desktop searches must start directly. Only mobile needs this preflight,
+    // because the mobile phase intentionally cleared Bing/Rewards cookies.
+    if (mobilePhase) {
+      const sessionReady = await ensureRewardsSessionForSearches(
+        "before the first mobile search",
+      );
+      if (!sessionReady && !ignoreDailyQuota) {
+        earlyStopReason = "session_unavailable";
+        logs &&
+          log(
+            "[SEARCH] Mobile Rewards session could not be confirmed; stopping before uncredited searches are sent.",
+            "error",
+          );
+        return false;
+      }
+      if (!sessionReady) {
+        logs &&
+          log(
+            "[SEARCH] Forced manual run: mobile login was not confirmed, continuing requested searches.",
+            "warning",
+          );
+      }
     }
 
     checkpointSnapshot = await fetchRewardsSnapshot();
@@ -3114,13 +3152,19 @@ async function search(searches, min, max, interruptible = true) {
           );
         await clear(interruptible, true);
         await delay(shortestDelay, interruptible);
-        if (
-          !(await ensureRewardsSessionForSearches(
-            "after the mobile patch cleared cookies",
-          ))
-        ) {
+        const sessionReady = await ensureRewardsSessionForSearches(
+          "after the mobile patch cleared cookies",
+        );
+        if (!sessionReady && !ignoreDailyQuota) {
           earlyStopReason = "session_unavailable";
           break;
+        }
+        if (!sessionReady) {
+          logs &&
+            log(
+              "[SEARCH] Forced manual run: post-clear login was not confirmed, continuing.",
+              "warning",
+            );
         }
       }
       const readDelay = getReadDelay();

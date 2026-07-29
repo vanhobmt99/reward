@@ -162,11 +162,14 @@ describe("service regressions", () => {
     );
   });
 
-  test("mobile sign-in is confirmed before searches and after patch cookie clears", () => {
-    expect(serviceSource).toContain(
+  test("mobile sign-in is confirmed without diverting forced desktop searches into click", () => {
+    expect(serviceSource).toContain('"before the first mobile search"');
+    expect(serviceSource).toContain('"after the mobile patch cleared cookies"');
+    expect(serviceSource).toContain("if (ignoreDailyQuota && !mobilePhase)");
+    expect(serviceSource).toContain("if (!sessionReady && !ignoreDailyQuota)");
+    expect(serviceSource).not.toContain(
       '`before the first ${mobilePhase ? "mobile" : "desktop"} search`',
     );
-    expect(serviceSource).toContain('"after the mobile patch cleared cookies"');
     // A successful trusted hamburger press must still be followed by the
     // content-script step that inspects/clicks the actual Sign in menu item.
     expect(serviceSource).toContain("if (config?.runtime?.mobile || !success)");
