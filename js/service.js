@@ -115,8 +115,10 @@ let logs = config?.control?.log;
 let needPatch = false;
 let searchQuery = "";
 let usedSearchQueryTemplates = new Set();
-// Set for the duration of a manual run: the user asked for these searches, so
-// neither the plan trimming nor the "daily quota is full" early stop applies.
+// Set for the duration of a manual run: start the plan the user asked for
+// without trimming against today's counters, and do not divert into login-click
+// recovery mid-run. Mid-run still stops on a full or frozen Rewards counter —
+// more uncredited volume is wasted; the user can re-run when ready.
 let ignoreDailyQuota = false;
 // Topic run for the current session: keeps consecutive queries inside one
 // subject for a few searches instead of re-rolling the category every time.
@@ -2686,6 +2688,30 @@ async function visitOneResult(tabId, interruptible = true) {
   }
 }
 
+// Trusted Enter press on the search box. Preferred over a page-side button
+// click: the content-script path can race Bing's React re-render and leave the
+// tab on the homepage while the automation thinks it "performed".
+async function submitSearchViaDebugger(tabId) {
+  const base = {
+    key: "Enter",
+    code: "Enter",
+    windowsVirtualKeyCode: 13,
+    nativeVirtualKeyCode: 13,
+  };
+  for (const type of ["rawKeyDown", "keyUp"]) {
+    await race(
+      chrome.debugger.sendCommand({ tabId }, "Input.dispatchKeyEvent", {
+        type,
+        ...base,
+        // Chromium treats `\r` as the character produced by Enter on keyDown.
+        ...(type === "rawKeyDown" ? { text: "\r", unmodifiedText: "\r" } : {}),
+      }),
+      shortestDelay,
+      `Failed to dispatch Enter for tab ${tabId} within timeout.`,
+    );
+  }
+}
+
 async function perform(interruptible = true) {
   if (interruptible && !config?.runtime?.running) {
     logs &&
@@ -2710,20 +2736,41 @@ async function perform(interruptible = true) {
   logs && log("[PERFORM] Starting perform operation...", "update");
   try {
     await enableDomains(tabId);
-    const response = await sendTabMessage(
-      tabId,
-      {
-        action: "perform",
-        query: searchQuery,
-      },
-      "PERFORM",
-    );
-    if (!response || response.success === false) {
-      throw new Error(
-        response?.message || "Content script perform did not respond.",
-      );
+    // Prefer CDP Enter first: this is the search submit, not the account-menu
+    // login `click()`. Falling back to the content script only when the
+    // debugger path fails to leave the homepage.
+    let submitted = false;
+    try {
+      await submitSearchViaDebugger(tabId);
+      submitted = true;
+      logs &&
+        log(
+          `[PERFORM] - Search submitted via debugger Enter: ${searchQuery}`,
+          "update",
+        );
+    } catch (debuggerError) {
+      logs &&
+        log(
+          `[PERFORM] - Debugger Enter failed (${debuggerError.message}); trying content script.`,
+          "warning",
+        );
     }
-    logs && log(`[PERFORM] - Search query sent: ${searchQuery}`, "update");
+    if (!submitted) {
+      const response = await sendTabMessage(
+        tabId,
+        {
+          action: "perform",
+          query: searchQuery,
+        },
+        "PERFORM",
+      );
+      if (!response || response.success === false) {
+        throw new Error(
+          response?.message || "Content script perform did not respond.",
+        );
+      }
+      logs && log(`[PERFORM] - Search query sent: ${searchQuery}`, "update");
+    }
     const navigation = await waitForUrl(
       tabId,
       (url) =>
@@ -2732,6 +2779,28 @@ async function perform(interruptible = true) {
     );
     if (navigation.success) {
       await wait(tabId);
+    } else if (submitted) {
+      // Debugger Enter did not navigate — try the content-script submit once
+      // before declaring failure. Covers pages where the input lost focus.
+      const response = await sendTabMessage(
+        tabId,
+        {
+          action: "perform",
+          query: searchQuery,
+        },
+        "PERFORM",
+      );
+      if (response?.success) {
+        const retryNav = await waitForUrl(
+          tabId,
+          (url) =>
+            url !== originalUrl && isConfirmedBingSearchUrl(url, searchQuery),
+          longestDelay,
+        );
+        if (retryNav.success) await wait(tabId);
+      } else {
+        await delay(mediumDelay, interruptible);
+      }
     } else {
       await delay(mediumDelay, interruptible);
     }
@@ -2796,7 +2865,10 @@ async function search(searches, min, max, interruptible = true) {
   const originalUrl = await getTabUrl(tabId);
   const clearIt = config?.control?.clear;
 
-  if (clearIt && !config?.runtime?.mobile) await clear();
+  // Do not clear cache on the desktop phase. The "Enhanced Patch" clear is for
+  // the mobile cookie wipe (search-phases.js) so mobile points register; wiping
+  // Bing cache before every desktop run only adds a loading detour and does not
+  // improve PC search crediting.
   await delay(shortestDelay, interruptible);
   if (originalUrl && originalUrl !== bing) {
     await chrome.tabs.update(tabId, {
@@ -2833,14 +2905,19 @@ async function search(searches, min, max, interruptible = true) {
     humanReadDelayMs(min, max, { boost: checkpointDelayBoost });
 
   // A couple of "stepped away from the keyboard" gaps per run. A session with
-  // no interruption at all is itself unusual.
-  const longPauseIndices = planLongPauseIndices(searches);
+  // no interruption at all is itself unusual. Forced manual runs skip these —
+  // the user is watching and can re-run if points lag; multi-minute idle gaps
+  // only help scheduled unattended sessions look natural.
+  const longPauseIndices = ignoreDailyQuota
+    ? new Set()
+    : planLongPauseIndices(searches);
 
   // ── Point-crediting checkpoint ─────────────────────────────────────────────
   // A search that navigated successfully can still earn nothing (half-logged-in
   // session after the mobile cookie clear, silently detached debugger dropping
   // the mobile UA, Bing rate limiting). Compare the real Rewards counter against
-  // our local progress and use a bounded make-up budget for missing credit.
+  // our local progress for stall/quota stops only — never pad the plan with
+  // make-up searches. The desk/mob counts on the form are exact.
   const mobilePhase = Boolean(config?.runtime?.mobile);
   const counterField = mobilePhase ? "mobProgress" : "pcProgress";
   const counterMaxField = mobilePhase ? "mobMax" : "pcMax";
@@ -2862,6 +2939,7 @@ async function search(searches, min, max, interruptible = true) {
   let checkpointDone = 0;
   let checkpointDelayBoost = 1;
   let consecutiveStallRecoveries = 0;
+  // Equals the plan size (no make-up allowance).
   const iterationLimit = getSearchIterationLimit(searches);
   // Set when the counter says there is nothing left to earn — either the daily
   // quota is full, or Bing has stopped crediting and recovery did not help.
@@ -2870,6 +2948,25 @@ async function search(searches, min, max, interruptible = true) {
 
   const ensureRewardsSessionForSearches = async (reason) => {
     if (await checkRewardsApiSession()) return true;
+
+    // A forced manual run is "search what I asked for". The only time it must
+    // open the account menu is right after the mobile phase wiped cookies —
+    // that is the only path that actually logged the user out. Mid-run stall
+    // recovery (API lag, full counter, flaky getuserinfo) must NOT steal the
+    // tab into hamburger / .b_clickarea clicks while searches are waiting.
+    const reasonText = String(reason || "");
+    const mobileLoginRequired =
+      mobilePhase &&
+      (reasonText.includes("before the first mobile") ||
+        reasonText.includes("after the mobile patch"));
+    if (ignoreDailyQuota && !mobileLoginRequired) {
+      logs &&
+        log(
+          `[SEARCH] Forced run: skipping login-click recovery ${reasonText}; keeping the search tab on Bing.`,
+          "warning",
+        );
+      return false;
+    }
 
     for (let attempt = 1; attempt <= 3; attempt++) {
       logs &&
@@ -2896,14 +2993,15 @@ async function search(searches, min, max, interruptible = true) {
         `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter frozen while searches kept running; recovering session (attempt ${consecutiveStallRecoveries}).`,
         "warning",
       );
-    // A manual desktop run is an explicit "search now" command. Do not divert
-    // it into the account-menu click flow merely because the Rewards API is
-    // delayed or temporarily unavailable; slow down and keep the search tab on
-    // Bing instead. Mobile is different because its cookie clear genuinely
-    // requires a login recovery before points can register.
-    if (ignoreDailyQuota && !mobilePhase) {
+    // Forced manual runs (desktop AND mobile): never divert into the
+    // account-menu click flow merely because the Rewards API is delayed or the
+    // counter is lagging. Slow down, stay on Bing, and keep searching.
+    if (ignoreDailyQuota) {
       await chrome.tabs.update(tabId, { url: bing, active: true });
       await wait(tabId);
+      if (mobilePhase) {
+        await ensureEmulation(tabId);
+      }
       await delay(shortestDelay, interruptible);
       checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
       return true;
@@ -2966,18 +3064,15 @@ async function search(searches, min, max, interruptible = true) {
         successfulSinceCheckpoint,
         pointsPerSearch: DEFAULT_POINTS_PER_SEARCH,
       });
-    if (quotaFull && !ignoreDailyQuota) {
+    if (quotaFull) {
+      // Counter is full: further searches earn nothing. Stop even on a forced
+      // manual run — the user can re-run later if they still need volume; more
+      // uncredited traffic only burns time and looks automated.
       earlyStopReason = "quota_full";
       logs &&
         log(
           `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} search counter reached max (${snapshot[counterField]}/${snapshot[counterMaxField]}); stopping this phase.`,
           "success",
-        );
-    } else if (quotaFull) {
-      logs &&
-        log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter is already at max (${snapshot[counterField]}/${snapshot[counterMaxField]}).`,
-          "warning",
         );
     } else if (
       progressed <= 0 &&
@@ -3000,9 +3095,11 @@ async function search(searches, min, max, interruptible = true) {
       if (!recovered && !ignoreDailyQuota) {
         earlyStopReason = "session_unavailable";
       } else if (!recovered) {
+        // Forced run already skipped login-click recovery; keep searching a
+        // bit longer until the plateau threshold below decides to stop.
         logs &&
           log(
-            "[SEARCH] Forced manual run: login recovery failed, continuing requested searches.",
+            "[SEARCH] Forced manual run: login recovery skipped/failed; will reassess at next checkpoint.",
             "warning",
           );
       }
@@ -3010,29 +3107,23 @@ async function search(searches, min, max, interruptible = true) {
       // Recovery has already been tried the allowed number of times and the
       // counter still has not moved. Searching harder is the wrong response:
       // the account is not being credited, and continuing only adds volume to
-      // a session Bing is already ignoring. Stop and leave the rest for the
-      // next run.
-      if (ignoreDailyQuota) {
-        logs &&
-          log(
-            `[SEARCH] Forced manual run: ${mobilePhase ? "mobile" : "PC"} counter is still frozen; continuing the requested search plan.`,
-            "warning",
-          );
-      } else {
-        earlyStopReason = "plateau";
-        logs &&
-          log(
-            `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} consecutive recovery attempts; stopping instead of searching further.`,
-            "warning",
-          );
-      }
+      // a session Bing is already ignoring. Stop and leave the rest for a
+      // fresh re-run (manual force or schedule) after the session settles.
+      earlyStopReason = "plateau";
+      logs &&
+        log(
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} consecutive recovery attempts; stopping instead of searching further.`,
+          "warning",
+        );
     } else {
       consecutiveStallRecoveries = 0;
       if (missingPoints > 0) {
+        // Slow the pace slightly when Bing is under-crediting, but do not add
+        // extra searches — the plan size stays what the user typed.
         checkpointDelayBoost = Math.min(checkpointDelayBoost * 1.5, 4);
         logs &&
           log(
-            `[SEARCH] Counter increased by ${progressed}/${expected} expected points; ${missingPoints} point(s) will be covered by make-up searches.`,
+            `[SEARCH] Counter increased by ${progressed}/${expected} expected points; ${missingPoints} point(s) short (no make-up — plan stays fixed).`,
             "warning",
           );
       } else {
@@ -3102,6 +3193,7 @@ async function search(searches, min, max, interruptible = true) {
 
     checkpointSnapshot = await fetchRewardsSnapshot();
     latestRewardsSnapshot = checkpointSnapshot;
+    // Diagnostic only — never used to extend the plan past desk/mob counts.
     creditGoal = createSearchCreditGoal(
       checkpointSnapshot,
       counterField,
@@ -3123,14 +3215,6 @@ async function search(searches, min, max, interruptible = true) {
       const i = attemptedIterations;
       attemptedIterations++;
       let browsedMs = 0;
-      if (i >= searches) {
-        config.runtime.total = (Number(config.runtime.total) || 0) + 1;
-        logs &&
-          log(
-            `[SEARCH] Starting make-up search ${i - searches + 1}/${iterationLimit - searches} because the Rewards counter is still short.`,
-            "warning",
-          );
-      }
       if (interruptible && !config?.runtime?.running) {
         logs &&
           log("[SEARCH] Interrupted, skipping search operation.", "warning");
@@ -3346,27 +3430,26 @@ async function search(searches, min, max, interruptible = true) {
       );
     return false;
   }
-  if (creditGoal) {
-    if (
-      !isSearchCreditGoalReached(
-        creditGoal,
-        latestRewardsSnapshot,
-        counterField,
-      )
-    ) {
-      logs &&
-        log(
-          `[SEARCH] Phase incomplete after bounded make-up searches: Rewards counter ${latestRewardsSnapshot?.[counterField] ?? "unknown"}/${creditGoal.target}.`,
-          "warning",
-        );
-      return false;
-    }
+  // Plan success = confirmed navigations match the form count. Point shortfalls
+  // are logged only — no make-up searches, user re-runs if they want more.
+  if (
+    creditGoal &&
+    !isSearchCreditGoalReached(creditGoal, latestRewardsSnapshot, counterField)
+  ) {
     logs &&
       log(
-        `[SEARCH] Rewards credit target reached: ${latestRewardsSnapshot[counterField]}/${creditGoal.target}.`,
+        `[SEARCH] Plan finished ${successfulSearches}/${searches} searches; Rewards counter ${latestRewardsSnapshot?.[counterField] ?? "unknown"}/${creditGoal.target} (short — re-run if needed).`,
+        "warning",
+      );
+  } else if (
+    creditGoal &&
+    isSearchCreditGoalReached(creditGoal, latestRewardsSnapshot, counterField)
+  ) {
+    logs &&
+      log(
+        `[SEARCH] Rewards credit looks complete: ${latestRewardsSnapshot[counterField]}/${creditGoal.target}.`,
         "success",
       );
-    return true;
   }
   if (!isCompleteSearchCount(successfulSearches, searches)) {
     logs &&
@@ -4470,7 +4553,17 @@ async function initialise(
           attachFn: attach,
           detachFn: detach,
           clearFn: clear,
-          clickFn: click,
+          clickFn: async (...args) => {
+            if (ignoreDailyQuota) {
+              logs &&
+                log(
+                  "[POST_SEARCH] Forced run: skipping post-search login click.",
+                  "update",
+                );
+              return true;
+            }
+            return click(...args);
+          },
           waitFn: wait,
           delayFn: delay,
           createTabFn: (opts) => chrome.tabs.create(opts),
@@ -4576,7 +4669,20 @@ async function initialise(
         attachFn: attach,
         detachFn: detach,
         clearFn: clear,
-        clickFn: click,
+        // Forced manual search must not end in a post-clear account-menu click
+        // ritual. The user asked for searches; login recovery is only needed
+        // after the mobile cookie wipe (handled inside the search phase).
+        clickFn: async (...args) => {
+          if (ignoreDailyQuota) {
+            logs &&
+              log(
+                "[POST_SEARCH] Forced run: skipping post-search login click.",
+                "update",
+              );
+            return true;
+          }
+          return click(...args);
+        },
         waitFn: wait,
         delayFn: delay,
         createTabFn: (opts) => chrome.tabs.create(opts),

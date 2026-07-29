@@ -54,72 +54,62 @@ describe("search credit goals", () => {
   });
 });
 
-describe("make-up search budget", () => {
-  test("adds a bounded make-up allowance", () => {
-    expect(getSearchIterationLimit(5)).toBe(9);
-    expect(getSearchIterationLimit(20)).toBe(28);
-    expect(getSearchIterationLimit(100)).toBe(100 + MAX_MAKEUP_SEARCHES);
+describe("exact plan size (no make-up)", () => {
+  test("iteration limit equals the requested plan only", () => {
+    expect(MAX_MAKEUP_SEARCHES).toBe(0);
+    expect(getSearchIterationLimit(5)).toBe(5);
+    expect(getSearchIterationLimit(20)).toBe(20);
+    expect(getSearchIterationLimit(100)).toBe(100);
+    expect(getSearchIterationLimit(0)).toBe(0);
   });
 
-  test("runs the requested iterations before consulting the counter", () => {
+  test("runs exactly the requested iterations and stops", () => {
     expect(
       shouldContinueSearch({
         attemptedIterations: 4,
         requestedSearches: 5,
         successfulSearches: 4,
-        iterationLimit: 9,
+        iterationLimit: 5,
         creditGoal: { target: 15 },
-        snapshot: { pcProgress: 15 },
+        snapshot: { pcProgress: 0 },
         counterField: "pcProgress",
       }),
     ).toBe(true);
-  });
-
-  test("adds make-up searches while the point target is short", () => {
-    const base = {
-      requestedSearches: 5,
-      successfulSearches: 5,
-      iterationLimit: 9,
-      creditGoal: { target: 15 },
-      counterField: "pcProgress",
-    };
     expect(
       shouldContinueSearch({
-        ...base,
         attemptedIterations: 5,
+        requestedSearches: 5,
+        successfulSearches: 5,
+        iterationLimit: 5,
+        creditGoal: { target: 15 },
         snapshot: { pcProgress: 12 },
-      }),
-    ).toBe(true);
-    expect(
-      shouldContinueSearch({
-        ...base,
-        attemptedIterations: 6,
-        snapshot: { pcProgress: 15 },
+        counterField: "pcProgress",
       }),
     ).toBe(false);
   });
 
-  test("falls back to confirmed-search count without a Rewards snapshot", () => {
+  test("does not add searches when the point target is short", () => {
     expect(
       shouldContinueSearch({
         attemptedIterations: 5,
         requestedSearches: 5,
-        successfulSearches: 4,
-        iterationLimit: 9,
+        successfulSearches: 5,
+        iterationLimit: 5,
+        creditGoal: { target: 15 },
+        snapshot: { pcProgress: 9 },
+        counterField: "pcProgress",
       }),
-    ).toBe(true);
+    ).toBe(false);
   });
 
-  test("never exceeds the iteration limit", () => {
+  test("does not extend past the plan when successes are short either", () => {
+    // Failures inside the plan still consume a slot; no free make-up attempts.
     expect(
       shouldContinueSearch({
-        attemptedIterations: 9,
+        attemptedIterations: 5,
         requestedSearches: 5,
-        successfulSearches: 0,
-        iterationLimit: 9,
-        creditGoal: { target: 15 },
-        snapshot: { pcProgress: 0 },
-        counterField: "pcProgress",
+        successfulSearches: 3,
+        iterationLimit: 5,
       }),
     ).toBe(false);
   });

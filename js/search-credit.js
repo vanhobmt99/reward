@@ -1,13 +1,17 @@
 /**
- * Pure helpers for deciding when a search phase needs make-up searches.
+ * Pure helpers for search phase bookkeeping.
  *
- * Bing Rewards counters are point counters, while the automation loop counts
- * result-page navigations. A confirmed navigation is therefore not enough to
- * prove that a search was credited.
+ * The loop runs exactly the plan the user set (desk/mob counts). It does not
+ * add make-up searches when the Rewards counter lags — shortfalls are left for
+ * a later re-run.
+ *
+ * Checkpoint helpers still compare local navigations to the real counter so
+ * stall/quota detection can stop a dead session early.
  */
 
 export const DEFAULT_POINTS_PER_SEARCH = 3;
-export const MAX_MAKEUP_SEARCHES = 12;
+// Kept as 0 so older call sites that add an "allowance" stay exact-plan only.
+export const MAX_MAKEUP_SEARCHES = 0;
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -44,36 +48,28 @@ export function isSearchCreditGoalReached(goal, snapshot, counterField) {
   return current !== null && current >= goal.target;
 }
 
+/** Hard cap on loop iterations = the plan size. No make-up budget. */
 export function getSearchIterationLimit(requestedSearches) {
-  const requested = Math.max(0, Math.floor(Number(requestedSearches) || 0));
-  if (requested <= 0) return 0;
-  const allowance = Math.min(
-    MAX_MAKEUP_SEARCHES,
-    Math.max(4, Math.ceil(requested * 0.4)),
-  );
-  return requested + allowance;
+  return Math.max(0, Math.floor(Number(requestedSearches) || 0));
 }
 
+/**
+ * Continue only while fewer than `requestedSearches` iterations have been
+ * attempted. Point shortfalls never extend the plan.
+ */
 export function shouldContinueSearch({
   attemptedIterations,
   requestedSearches,
-  successfulSearches,
-  iterationLimit,
-  creditGoal,
-  snapshot,
-  counterField,
+  // Remaining args kept for call-site compatibility; intentionally unused.
+  successfulSearches: _successfulSearches,
+  iterationLimit: _iterationLimit,
+  creditGoal: _creditGoal,
+  snapshot: _snapshot,
+  counterField: _counterField,
 }) {
   const attempted = Math.max(0, Number(attemptedIterations) || 0);
   const requested = Math.max(0, Number(requestedSearches) || 0);
-  const successful = Math.max(0, Number(successfulSearches) || 0);
-  const limit = Math.max(requested, Number(iterationLimit) || 0);
-
-  if (attempted >= limit) return false;
-  if (attempted < requested) return true;
-  if (creditGoal) {
-    return !isSearchCreditGoalReached(creditGoal, snapshot, counterField);
-  }
-  return successful < requested;
+  return attempted < requested;
 }
 
 export function assessSearchCheckpoint({

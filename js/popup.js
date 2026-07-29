@@ -705,10 +705,15 @@ $(document).ready(async function () {
       .find((c) => /^m\d$/.test(c));
     const preset = SEARCH_MODE_PRESETS[mode];
     if (preset) {
+      // Update the form immediately so a fast follow-up press of "Làm nhiệm vụ"
+      // reads the preset counts from the inputs, not a stale previous plan.
+      $searchDesk.val(preset.desk);
+      $searchMob.val(preset.mob);
       await saveConfigMutation((next) => {
         next.search.desk = preset.desk;
         next.search.mob = preset.mob;
       });
+      compare();
     }
   });
   $scheduleDesk.on("change", async function () {

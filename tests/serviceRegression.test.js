@@ -162,10 +162,21 @@ describe("service regressions", () => {
     );
   });
 
-  test("mobile sign-in is confirmed without diverting forced desktop searches into click", () => {
+  test("mobile sign-in is confirmed without diverting forced searches into click", () => {
     expect(serviceSource).toContain('"before the first mobile search"');
     expect(serviceSource).toContain('"after the mobile patch cleared cookies"');
-    expect(serviceSource).toContain("if (ignoreDailyQuota && !mobilePhase)");
+    // Forced runs skip login-click except right after the mobile cookie wipe.
+    expect(serviceSource).toContain("const mobileLoginRequired =");
+    expect(serviceSource).toContain(
+      "if (ignoreDailyQuota && !mobileLoginRequired)",
+    );
+    // Stall recovery on a forced run must not open the account menu either.
+    expect(serviceSource).toMatch(
+      /if \(ignoreDailyQuota\) \{\s*await chrome\.tabs\.update\(tabId, \{ url: bing/,
+    );
+    expect(serviceSource).toContain(
+      "[POST_SEARCH] Forced run: skipping post-search login click.",
+    );
     expect(serviceSource).toContain("if (!sessionReady && !ignoreDailyQuota)");
     expect(serviceSource).not.toContain(
       '`before the first ${mobilePhase ? "mobile" : "desktop"} search`',
@@ -174,6 +185,9 @@ describe("service regressions", () => {
     // content-script step that inspects/clicks the actual Sign in menu item.
     expect(serviceSource).toContain("if (config?.runtime?.mobile || !success)");
     expect(serviceSource).not.toContain("let clickedForPatch = false;");
+    // Search submit is CDP Enter first, not the account-menu click() path.
+    expect(serviceSource).toContain("async function submitSearchViaDebugger");
+    expect(serviceSource).toContain("await submitSearchViaDebugger(tabId)");
   });
 
   test("a manual start runs the requested plan regardless of today's counters", () => {
@@ -193,7 +207,21 @@ describe("service regressions", () => {
     // The force flag must be scoped to the run that set it.
     expect(serviceSource).toContain("ignoreDailyQuota = Boolean(force);");
     expect(serviceSource).toContain("ignoreDailyQuota = false;");
-    expect(serviceSource).toContain("if (quotaFull && !ignoreDailyQuota)");
+    // Force still starts the full plan, but mid-run stops when the real
+    // counter is full or frozen — more uncredited volume does not help.
+    expect(serviceSource).toContain('earlyStopReason = "quota_full"');
+    expect(serviceSource).toContain('earlyStopReason = "plateau"');
+    expect(serviceSource).not.toContain(
+      "continuing the requested search plan.",
+    );
+    // Forced runs skip multi-minute "stepped away" pauses; scheduled runs keep them.
+    expect(serviceSource).toContain(
+      "const longPauseIndices = ignoreDailyQuota",
+    );
+    // Desktop search must not clear Bing cache (mobile clear stays in search-phases).
+    expect(serviceSource).not.toContain(
+      "if (clearIt && !config?.runtime?.mobile) await clear();",
+    );
   });
 
   test("activity confirmation does not count skips or zero-delta processed tabs as success", () => {
