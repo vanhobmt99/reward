@@ -296,7 +296,7 @@ describe("planLongPauseIndices", () => {
 
   test("scales with the number of searches", () => {
     const rng = seqRng([0.5]);
-    expect(planLongPauseIndices(30, { rng }).size).toBeGreaterThan(0);
+    expect(planLongPauseIndices(60, { rng }).size).toBeGreaterThan(0);
     expect(planLongPauseIndices(3, { rng }).size).toBe(0);
     expect(planLongPauseIndices(0, { rng }).size).toBe(0);
   });
@@ -306,19 +306,19 @@ describe("planLongPauseIndices", () => {
     expect(longPauseMs(seqRng([1]))).toBe(LONG_PAUSE_MAX_MS);
   });
 
-  test("the tuned defaults keep a whole run's break budget near two minutes", () => {
-    // These numbers are a deliberate wall-clock trade, not incidental: the
-    // previous 90-240s at one pause per 12 searches cost ~8 minutes per run,
-    // which dwarfed every other cost of the humanisation work. Pin them so a
-    // future tweak has to be a decision rather than a drift.
-    expect(DEFAULT_SEARCHES_PER_LONG_PAUSE).toBe(20);
-    expect(LONG_PAUSE_MIN_MS).toBe(60000);
-    expect(LONG_PAUSE_MAX_MS).toBe(150000);
+  test("the tuned defaults keep a whole run's break budget near a minute", () => {
+    // These numbers are a deliberate wall-clock trade, not incidental: pauses
+    // were the single largest humanisation cost, so they were cut to roughly
+    // one short break per typical run. Pin them so a future tweak has to be a
+    // decision rather than a drift.
+    expect(DEFAULT_SEARCHES_PER_LONG_PAUSE).toBe(30);
+    expect(LONG_PAUSE_MIN_MS).toBe(30000);
+    expect(LONG_PAUSE_MAX_MS).toBe(60000);
 
-    // A 31 + 21 run: one pause per phase, worst case 2.5 minutes each.
+    // A 31 + 21 run: one pause in the desktop phase, none in mobile.
     const pausesPerRun =
       planLongPauseIndices(31).size + planLongPauseIndices(21).size;
-    expect(pausesPerRun).toBe(2);
-    expect((pausesPerRun * LONG_PAUSE_MAX_MS) / 60000).toBeLessThanOrEqual(5);
+    expect(pausesPerRun).toBe(1);
+    expect((pausesPerRun * LONG_PAUSE_MAX_MS) / 60000).toBeLessThanOrEqual(1);
   });
 });

@@ -497,10 +497,24 @@ describe("service regressions", () => {
     expect(serviceSource).toContain("installFingerprintPatch(tabId)");
   });
 
-  test("Daily Set and Claim use trusted CDP mouse presses", () => {
+  test("Daily Set, Keep earning, and Claim use trusted CDP mouse presses", () => {
     expect(serviceSource).toContain("async function dispatchTrustedPress");
     expect(serviceSource).toContain('"DAILY SET"');
+    expect(serviceSource).toContain('"KEEP EARNING"');
     expect(serviceSource).toContain('"CLAIM"');
+    expect(serviceSource).toContain(
+      "createEarnActivityScript([...blockedKeys], 1, true)",
+    );
+  });
+
+  test("search path does not open organic result links", () => {
+    // Visits were a major source of slow + flaky next-search behaviour.
+    expect(serviceSource).not.toContain("createResultPickScript");
+    expect(serviceSource).not.toContain("visitOneResult");
+    expect(serviceSource).not.toContain("browseResults");
+    expect(serviceSource).toContain("async function stabilizeAfterSearch");
+    expect(serviceSource).toContain("Closed");
+    expect(serviceSource).toContain("stray tab");
   });
 
   test("scheduled runs fail closed when Rewards counters are unavailable", () => {

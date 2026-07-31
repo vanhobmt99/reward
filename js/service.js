@@ -65,7 +65,6 @@ import {
   createEarnActivityScript,
   createSolveActivityScript,
   createClaimReadyScript,
-  createResultPickScript,
 } from "/js/injected-scripts.js";
 import { createCookieHelpers } from "/js/cookies.js";
 import { installGlobalCrashHandlers, recordCrash } from "/js/crash-logger.js";
@@ -98,7 +97,6 @@ import {
 import {
   planTypingSteps,
   createNicheSession,
-  planScrollSteps,
   humanReadDelayMs,
   planLongPauseIndices,
   longPauseMs,
@@ -141,8 +139,8 @@ let shortestDelay = 1000;
 let mediumDelay = 3000;
 let longestDelay = 15000;
 let searchKeepaliveCancel = null;
-const typingDelayMin = 55;
-const typingDelayMax = 125;
+const typingDelayMin = 30;
+const typingDelayMax = 60;
 const preSubmitDelayMin = 700;
 const preSubmitDelayMax = 1700;
 const failedSearchSettleDelayMin = 1200;
@@ -157,12 +155,9 @@ const emulationCommandTimeout = 5000;
 const emulationAttempts = 3;
 const searchRetryDelayMin = 1800;
 const searchRetryDelayMax = 3200;
-// Share of searches that end in opening one of the results, and how long that
-// page is read for. A click-through rate of exactly 0 across every search of
-// every day is not a rate a person produces.
-const resultVisitChance = 0.2;
-const resultDwellMin = 9000;
-const resultDwellMax = 26000;
+// Organic result-link visits are intentionally not implemented on the search
+// path: the old 9–26s dwell + third-party navigation slowed runs and left the
+// RSA tab off Bing (breaking the next type/submit). Read-delay is enough.
 const finalSearchSettleDelayMax = 8000;
 const runtimeDefaults = { ...config.runtime };
 
@@ -2022,70 +2017,6 @@ async function enableDomains(tabId) {
   }
 }
 
-/**
- * Press a viewport point as a trusted input event: curved cursor travel then a
- * press/release pair (or a touch tap while emulating mobile).
- *
- * This is the coordinate-based half of `click()`, split out so callers that
- * already know where to press — the search-result visit, which gets its point
- * from `createResultPickScript` — do not have to go through that function's
- * sign-in-specific element lookup.
- */
-async function pressAtPoint(tabId, x, y, interruptible = true) {
-  if (config?.runtime?.mobile) {
-    await race(
-      chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
-        type: "touchStart",
-        touchPoints: [{ x, y, radiusX: 5, radiusY: 5, force: 0.5 }],
-      }),
-      shortestDelay,
-      `Failed to dispatch touch event for tab ${tabId} within timeout.`,
-    );
-    await delay(80 + Math.random() * 120, interruptible);
-    await race(
-      chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
-        type: "touchEnd",
-        touchPoints: [],
-      }),
-      shortestDelay,
-      `Failed to dispatch touch event for tab ${tabId} within timeout.`,
-    );
-    return;
-  }
-
-  const path = generateMousePath(lastMouseX, lastMouseY, x, y);
-  for (const point of path) {
-    await race(
-      chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x: point.x,
-        y: point.y,
-      }),
-      shortestDelay,
-    ).catch(() => {});
-    await delay(8 + Math.random() * 12, interruptible);
-  }
-  lastMouseX = x;
-  lastMouseY = y;
-  await delay(80 + Math.random() * 120, interruptible);
-  for (const type of ["mousePressed", "mouseReleased"]) {
-    await race(
-      chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-        type,
-        button: "left",
-        x,
-        y,
-        clickCount: 1,
-      }),
-      shortestDelay,
-      `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
-    );
-    if (type === "mousePressed") {
-      await delay(80 + Math.random() * 120, interruptible);
-    }
-  }
-}
-
 async function click(interruptible = true) {
   if (interruptible && !config?.runtime?.running) {
     logs && log("[CLICK] Interrupted, skipping click operation.", "warning");
@@ -2438,6 +2369,14 @@ async function query(interruptible = true, options = {}) {
       await attach(tabId, interruptible);
       await delay(shortestDelay, interruptible);
     }
+    // Typing without a Bing search box is the main next-query flake: land on
+    // Bing homepage first when the RSA tab is elsewhere (redirect, popup, etc.).
+    const pageUrl = await getTabUrl(tabId);
+    if (!isBingPageUrl(pageUrl)) {
+      await chrome.tabs.update(tabId, { url: bing, active: true });
+      await wait(tabId);
+      await delay(shortestDelay, interruptible);
+    }
     const expression = `(function() {
 			const input = document.querySelector("#sb_form_q");
 			if (input) {
@@ -2448,7 +2387,7 @@ async function query(interruptible = true, options = {}) {
 			}
 			return false;
 		})()`;
-    await race(
+    let cleared = await race(
       chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
         expression: expression,
         allowUnsafeEvalBlockedByCSP: true,
@@ -2456,7 +2395,24 @@ async function query(interruptible = true, options = {}) {
       }),
       shortestDelay,
       `Failed to clear search input for tab ${tabId} within timeout.`,
-    );
+    ).catch(() => null);
+    if (cleared?.result?.value !== true) {
+      await chrome.tabs.update(tabId, { url: bing, active: true });
+      await wait(tabId);
+      await delay(shortestDelay, interruptible);
+      cleared = await race(
+        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: expression,
+          allowUnsafeEvalBlockedByCSP: true,
+          returnByValue: true,
+        }),
+        shortestDelay,
+        `Failed to clear search input for tab ${tabId} within timeout.`,
+      ).catch(() => null);
+      if (cleared?.result?.value !== true) {
+        throw new Error("Bing search input not available after reload.");
+      }
+    }
     await delay(250 + Math.random() * 250, interruptible);
     // Type word-by-word, occasionally hitting a neighbouring key and correcting
     // it with a real Backspace. The steps always reconstruct `searchQuery`
@@ -2532,160 +2488,50 @@ async function query(interruptible = true, options = {}) {
   return true;
 }
 
-/**
- * Read the results page: scroll down in uneven steps, sometimes back up.
- *
- * Landing on a SERP and never moving is the strongest behavioural tell left in
- * this extension — real dwell time comes with scroll depth. Best-effort only;
- * a failure here must never fail the search that already scored.
- */
-async function browseResults(tabId, interruptible = true) {
-  const mobile = Boolean(config?.runtime?.mobile);
-  const steps = planScrollSteps({ mobile });
-  const startedAt = Date.now();
+function isBingPageUrl(url) {
   try {
-    for (const step of steps) {
-      if (interruptible && !config?.runtime?.running) return;
-      await race(
-        chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-          type: "mouseWheel",
-          x: lastMouseX,
-          y: lastMouseY,
-          deltaX: 0,
-          deltaY: step.deltaY,
-        }),
-        shortestDelay,
-      ).catch(() => {});
-      await delay(step.pauseMs, interruptible);
-    }
-    logs &&
-      log(
-        `[BROWSE] - Read results with ${steps.length} scroll steps.`,
-        "update",
-      );
-  } catch (error) {
-    logs && log(`[BROWSE] - Scroll skipped: ${error.message}`, "warning");
+    const host = new URL(String(url || "")).hostname.toLowerCase();
+    return host === "bing.com" || host.endsWith(".bing.com");
+  } catch {
+    return false;
   }
-
-  if (shouldVisitResult()) {
-    await visitOneResult(tabId, interruptible);
-  }
-
-  // Scrolling and reading ARE dwell time, so the caller subtracts them from the
-  // read delay rather than adding both — otherwise every run takes roughly
-  // twice as long.
-  return Date.now() - startedAt;
-}
-
-// Roughly one search in five ends in a result visit. A real click-through rate
-// is neither 0 (what this extension did before) nor 1 — both are distributions
-// no user produces.
-function shouldVisitResult() {
-  return Math.random() < resultVisitChance;
 }
 
 /**
- * Open one organic result, read it briefly, then come back to the results page.
- *
- * Fully best-effort and heavily fenced: the search has already scored by the
- * time this runs, so every failure path just returns. Tabs opened by the
- * destination page are closed, and the SERP URL is restored by navigation
- * rather than by history, because a page that pushed history entries would
- * otherwise leave the tab somewhere unexpected for the next search.
+ * Keep the search loop on a known surface: ads/popups must not accumulate, and
+ * the RSA tab must stay on Bing so the next type/submit finds #sb_form_q.
+ * Best-effort — never fails the search that already scored.
  */
-async function visitOneResult(tabId, interruptible = true) {
-  const serpUrl = await getTabUrl(tabId);
-  if (!serpUrl || !isConfirmedBingSearchUrl(serpUrl, searchQuery)) return;
-
-  const tabsBefore = new Set(
-    (await chrome.tabs.query({}).catch(() => [])).map((tab) => tab.id),
-  );
-
+async function stabilizeAfterSearch(tabId, existingTabIds, interruptible = true) {
   try {
-    const evaluation = await race(
-      chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-        expression: createResultPickScript(),
-        allowUnsafeEvalBlockedByCSP: true,
-        returnByValue: true,
-      }),
-      mediumDelay,
+    const opened = (await chrome.tabs.query({})).filter(
+      (tab) => tab.id !== tabId && !existingTabIds.has(tab.id),
     );
-    const pick = evaluation?.result?.value;
-    if (!pick?.found) {
+    for (const tab of opened) {
+      await chrome.tabs.remove(tab.id).catch(() => {});
+    }
+    if (opened.length > 0) {
       logs &&
         log(
-          `[BROWSE] - No result worth visiting (${pick?.reason || "unknown"}).`,
+          `[SEARCH] Closed ${opened.length} stray tab(s) opened during search.`,
           "update",
         );
-      return;
     }
+  } catch (e) {}
 
-    logs && log(`[BROWSE] - Visiting result: ${pick.title}`, "update");
-    // A trusted CDP press, not a page-side el.click(): Bing logs the click and
-    // the navigation happens through the same path a person's click takes.
-    await pressAtPoint(tabId, pick.x, pick.y, interruptible);
-
-    // Give the destination time to load, then read it the same way the SERP was
-    // read. Scrolling a third-party page is what a visit actually looks like.
-    await delay(mediumDelay, interruptible);
-    await wait(tabId).catch(() => {});
-    const dwell =
-      resultDwellMin + Math.random() * (resultDwellMax - resultDwellMin);
-    const readSteps = planScrollSteps({
-      mobile: Boolean(config?.runtime?.mobile),
-    });
-    const perStep = Math.max(shortestDelay, dwell / (readSteps.length || 1));
-    for (const step of readSteps) {
-      if (interruptible && !config?.runtime?.running) break;
-      await race(
-        chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-          type: "mouseWheel",
-          x: lastMouseX,
-          y: lastMouseY,
-          deltaX: 0,
-          deltaY: step.deltaY,
-        }),
-        shortestDelay,
-      ).catch(() => {});
-      await delay(Math.min(perStep, step.pauseMs + perStep / 2), interruptible);
-    }
-  } catch (error) {
-    logs && log(`[BROWSE] - Result visit skipped: ${error.message}`, "warning");
-  } finally {
-    // Close anything the destination opened (target=_blank, popup) before
-    // returning, so stray tabs cannot accumulate across a 30-search run.
-    try {
-      const opened = (await chrome.tabs.query({})).filter(
-        (tab) => tab.id !== tabId && !tabsBefore.has(tab.id),
-      );
-      for (const tab of opened) {
-        await chrome.tabs.remove(tab.id).catch(() => {});
-      }
-      if (opened.length > 0) {
-        logs &&
-          log(
-            `[BROWSE] - Closed ${opened.length} tab(s) opened by the result.`,
-            "update",
-          );
-      }
-    } catch (e) {}
-
-    // Back to the SERP so the next search starts from a known page.
-    try {
-      const current = await getTabUrl(tabId);
-      if (current !== serpUrl) {
-        await chrome.tabs.update(tabId, { url: serpUrl });
-        await wait(tabId);
-        await delay(shortestDelay, interruptible);
-      }
-    } catch (error) {
+  try {
+    const current = await getTabUrl(tabId);
+    if (!isBingPageUrl(current)) {
       logs &&
         log(
-          `[BROWSE] - Could not return to the results page: ${error.message}`,
+          `[SEARCH] RSA tab left Bing (${current || "unknown"}); restoring homepage.`,
           "warning",
         );
+      await chrome.tabs.update(tabId, { url: bing, active: true });
+      await wait(tabId);
+      await delay(shortestDelay, interruptible);
     }
-  }
+  } catch (e) {}
 }
 
 // Trusted Enter press on the search box. Preferred over a page-side button
@@ -3214,7 +3060,6 @@ async function search(searches, min, max, interruptible = true) {
     ) {
       const i = attemptedIterations;
       attemptedIterations++;
-      let browsedMs = 0;
       if (interruptible && !config?.runtime?.running) {
         logs &&
           log("[SEARCH] Interrupted, skipping search operation.", "warning");
@@ -3228,6 +3073,9 @@ async function search(searches, min, max, interruptible = true) {
           );
         return false;
       }
+      const tabsBeforeSearch = new Set(
+        (await chrome.tabs.query({}).catch(() => [])).map((tab) => tab.id),
+      );
       if (needPatch && clearIt && config?.runtime?.mobile) {
         logs &&
           log(
@@ -3346,17 +3194,12 @@ async function search(searches, min, max, interruptible = true) {
             `[SEARCH] Search ${i + 1} performed with query: ${searchQuery}.`,
             "success",
           );
-        // Read the page before moving on — dwell time without scroll depth is
-        // the pattern this is meant to avoid.
-        browsedMs = await browseResults(tabId, interruptible);
       }
+      // No organic result clicks — only clean up ad/popup tabs and keep RSA on Bing.
+      await stabilizeAfterSearch(tabId, tabsBeforeSearch, interruptible);
       await set(config);
       await updateProgressBadge();
-      await waitAfterIteration(
-        i,
-        Math.max(shortestDelay, readDelay - browsedMs),
-        searched,
-      );
+      await waitAfterIteration(i, Math.max(shortestDelay, readDelay), searched);
       if (searched && longPauseIndices.has(i) && i < searches - 1) {
         const pause = longPauseMs();
         logs &&
@@ -3778,6 +3621,11 @@ async function runDashboardActivityPass(
   sessionMisses,
   pass,
 ) {
+  // Promo/streak toasts often appear mid-run and cover the next card; clear
+  // them at the start of every pass rather than only once before the loop.
+  await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
+  await delay(shortestDelay, false);
+
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
   const blockedKeys = getBlockedActivityKeys(memory, sessionVisited);
@@ -3943,11 +3791,18 @@ async function runEarnActivityPass(
   pass,
 ) {
   const earnUrl = rewards + "earn";
+  // Same late-popup problem as Daily set: clear overlays before each scan so
+  // the CDP press (and the synthetic fallback) hit the card, not a toast.
+  await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
+  await delay(shortestDelay, false);
+
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
   const blockedKeys = getBlockedActivityKeys(memory, sessionVisited);
   const beforeScore = await fetchRewardsSnapshot();
-  const earnScript = createEarnActivityScript([...blockedKeys], 1);
+  // Trusted CDP press path (same as Daily set): SPA Rewards often ignores
+  // synthetic MouseEvent/click, which previously caused silent Keep-earning misses.
+  const earnScript = createEarnActivityScript([...blockedKeys], 1, true);
   const result = await race(
     chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
       expression: earnScript,
@@ -3962,8 +3817,16 @@ async function runEarnActivityPass(
   });
 
   const value = result?.result?.value || {};
-  const clickedItems = value.clicked || [];
+  let clickedItems = value.clicked || [];
   const skippedItems = value.skipped || [];
+  if (clickedItems.length > 0 && value.pressPoint) {
+    const pressed = await dispatchTrustedPress(
+      tabId,
+      value.pressPoint,
+      "KEEP EARNING",
+    );
+    if (!pressed) clickedItems = [];
+  }
   if (value.reason) {
     logs && log(`[ACTIVITY] Earn pass ${pass}: ${value.reason}.`, "warning");
   }

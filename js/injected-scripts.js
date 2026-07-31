@@ -389,14 +389,20 @@ ${activityDomHelpers()}
 	`;
 }
 
-export function createEarnActivityScript(visitedKeys, safetyLimit = 12) {
+export function createEarnActivityScript(
+  visitedKeys,
+  safetyLimit = 12,
+  deferToCdp = false,
+) {
   return `
 		(function() {
 			const clicked = [];
 			const skipped = [];
 			const openedKeys = [];
+			let pressPoint = null;
 			const visited = new Set(${JSON.stringify(visitedKeys || [])});
 			const seen = new Set();
+			const deferToCdp = ${Boolean(deferToCdp)};
 			const safetyLimit = ${Number(safetyLimit) || 12};
 ${activityDomHelpers()}
 			const skipReasonFor = (el) => {
@@ -454,6 +460,7 @@ ${activityDomHelpers()}
 					clicked,
 					skipped,
 					openedKeys,
+					pressPoint,
 					retry: canScroll,
 					reason: canScroll ?
 						'scrolled while looking for Keep earning' :
@@ -531,6 +538,15 @@ ${activityDomHelpers()}
 				const x = hit ? hit.x : centerX;
 				const y = hit ? hit.y : centerY;
 				const eventTarget = hit ? hit.element : target;
+				if (deferToCdp) {
+					if (hit) {
+						pressPoint = { x, y };
+						return true;
+					}
+					// Covered point would make the trusted CDP press hit the overlay,
+					// so skip CDP for this card and use the synthetic path below.
+					pressPoint = null;
+				}
 				try {
 					target.focus?.({ preventScroll: true });
 				} catch (error) {}
@@ -642,6 +658,7 @@ ${activityDomHelpers()}
 						clicked,
 						skipped,
 						openedKeys,
+						pressPoint,
 						retry: true,
 						reason: 'scrolled for more earn cards',
 						url: location.href,
@@ -660,6 +677,7 @@ ${activityDomHelpers()}
 				clicked,
 				skipped,
 				openedKeys,
+				pressPoint,
 				safetyLimit,
 				url: location.href,
 				title: document.title

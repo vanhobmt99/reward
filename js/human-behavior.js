@@ -61,7 +61,7 @@ export function nearbyKey(char, rng = Math.random) {
 export function planTypingSteps(query, options = {}) {
   const {
     rng = Math.random,
-    typoChance = 0.28,
+    typoChance = 0.18,
     maxTypos = 2,
     noticeDelayMin = 220,
     noticeDelayMax = 600,
@@ -223,9 +223,9 @@ function gaussian(rng) {
 // work, for a benefit that is pure conjecture. The break is kept (a session
 // with no interruption at all is itself unusual) but sized so it is no longer
 // the dominant term.
-export const LONG_PAUSE_MIN_MS = 60000;
-export const LONG_PAUSE_MAX_MS = 150000;
-export const DEFAULT_SEARCHES_PER_LONG_PAUSE = 20;
+export const LONG_PAUSE_MIN_MS = 30000;
+export const LONG_PAUSE_MAX_MS = 60000;
+export const DEFAULT_SEARCHES_PER_LONG_PAUSE = 30;
 export const READ_DELAY_CAP_MS = 90000;
 
 /**
@@ -250,7 +250,9 @@ export function humanReadDelayMs(minSec, maxSec, options = {}) {
   const sample = Math.exp(Math.log(median) + sigma * gaussian(rng));
 
   const floor = min;
-  const ceiling = Math.min(Math.max(max * 3, min), cap);
+  // Tail trimmed from 3x to 2x max: keeps the right-skewed human shape
+  // (occasional genuinely long reads) without the old worst-case cost.
+  const ceiling = Math.min(Math.max(max * 2, min), cap);
   const clamped = Math.min(Math.max(sample, floor), ceiling);
   return Math.round(Math.min(clamped * (Number(boost) || 1), cap));
 }

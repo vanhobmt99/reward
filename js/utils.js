@@ -262,6 +262,22 @@ function applyConfigDefaults(target, stored) {
   ) {
     target.control.humanPacingDefaultApplied = 1;
   }
+  // One-time migration to the faster pacing defaults (6-10s). Only rewrites
+  // configs still on a previous default band (7/14 or the short-lived 5/8);
+  // custom pacing is preserved. Versioned flag: bumping the number re-runs
+  // the migration once for configs already stamped with an older version.
+  if ((Number(target.control.fastPacingDefaultApplied) || 0) < 2) {
+    const isOldDefault = (band) =>
+      (band?.min === 7 && band?.max === 14) ||
+      (band?.min === 5 && band?.max === 8);
+    if (isOldDefault(target.search)) {
+      target.search = { ...target.search, min: 6, max: 10 };
+    }
+    if (isOldDefault(target.schedule)) {
+      target.schedule = { ...target.schedule, min: 6, max: 10 };
+    }
+    target.control.fastPacingDefaultApplied = 2;
+  }
 
   return target;
 }

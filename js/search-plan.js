@@ -4,8 +4,8 @@
  * service.js so the numeric clamping and template rotation can be unit-tested.
  */
 
-export const DEFAULT_SEARCH_DELAY_MIN = 7;
-export const DEFAULT_SEARCH_DELAY_MAX = 14;
+export const DEFAULT_SEARCH_DELAY_MIN = 6;
+export const DEFAULT_SEARCH_DELAY_MAX = 10;
 export const MINIMUM_SEARCH_DELAY = 5;
 
 // Clamp/normalise a search plan: non-negative integer counts, min delay floored

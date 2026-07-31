@@ -144,6 +144,19 @@ describe("createEarnActivityScript", () => {
     expect(card.click).toHaveBeenCalled();
   });
 
+  test("returns a CDP press point for a Keep-earning card without synthetic click", () => {
+    const card = stageEarnCard(
+      `<a class="earn-card" href="https://rewards.bing.com/quiz">+10 Start quiz</a>`,
+    );
+    const script = createEarnActivityScript([], 1, true);
+    const result = new Function("return (" + script + ")")();
+
+    expect(result.clicked).toHaveLength(1);
+    expect(result.clicked[0].type).toBe("keep-earning");
+    expect(result.pressPoint).toEqual({ x: 130, y: 95 });
+    expect(card.click).not.toHaveBeenCalled();
+  });
+
   test("skips a completed Keep-earning card without clicking", () => {
     const card = stageEarnCard(
       `<a class="earn-card" href="https://rewards.bing.com/quiz">+10 Completed quiz</a>`,

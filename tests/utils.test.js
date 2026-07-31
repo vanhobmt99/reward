@@ -239,11 +239,65 @@ describe("applyConfigDefaults()", () => {
 
     const result = applyConfigDefaults(target, stored);
 
+    // 10/20 → 7/14 (human pacing) → 6/10 (fast pacing) in one pass.
+    expect(result.search.min).toBe(6);
+    expect(result.search.max).toBe(10);
+    expect(result.schedule.min).toBe(6);
+    expect(result.schedule.max).toBe(10);
+    expect(result.control.humanPacingDefaultApplied).toBe(1);
+    expect(result.control.fastPacingDefaultApplied).toBe(2);
+  });
+
+  test("migrates 7/14 human pacing to fast pacing defaults once", () => {
+    const target = makeDefaultConfig();
+    const stored = {
+      search: { desk: 31, mob: 21, min: 7, max: 14 },
+      schedule: { desk: 31, mob: 21, min: 7, max: 14, mode: "m1" },
+      control: { enhancedPatchDefaultApplied: 1, humanPacingDefaultApplied: 1 },
+    };
+
+    const result = applyConfigDefaults(target, stored);
+
+    expect(result.search.min).toBe(6);
+    expect(result.search.max).toBe(10);
+    expect(result.schedule.min).toBe(6);
+    expect(result.schedule.max).toBe(10);
+    expect(result.control.fastPacingDefaultApplied).toBe(2);
+  });
+
+  test("migrates the short-lived 5/8 fast pacing band to 6/10", () => {
+    const target = makeDefaultConfig();
+    const stored = {
+      search: { desk: 31, mob: 21, min: 5, max: 8 },
+      control: {
+        enhancedPatchDefaultApplied: 1,
+        humanPacingDefaultApplied: 1,
+        fastPacingDefaultApplied: 1,
+      },
+    };
+
+    const result = applyConfigDefaults(target, stored);
+
+    expect(result.search.min).toBe(6);
+    expect(result.search.max).toBe(10);
+    expect(result.control.fastPacingDefaultApplied).toBe(2);
+  });
+
+  test("fast pacing migration runs only once per version", () => {
+    const target = makeDefaultConfig();
+    const stored = {
+      search: { desk: 31, mob: 21, min: 7, max: 14 },
+      control: {
+        enhancedPatchDefaultApplied: 1,
+        humanPacingDefaultApplied: 1,
+        fastPacingDefaultApplied: 2,
+      },
+    };
+
+    const result = applyConfigDefaults(target, stored);
+
     expect(result.search.min).toBe(7);
     expect(result.search.max).toBe(14);
-    expect(result.schedule.min).toBe(7);
-    expect(result.schedule.max).toBe(14);
-    expect(result.control.humanPacingDefaultApplied).toBe(1);
   });
 
   test("preserves custom pacing when applying human pacing migration", () => {
