@@ -87,6 +87,55 @@ describe("createDashboardActivityScript", () => {
     expect(result.pressPoint).toEqual({ x: 130, y: 95 });
     expect(card.click).not.toHaveBeenCalled();
   });
+
+  test("does not claim a Daily Set click when an overlay covers the card", () => {
+    document.body.innerHTML = `
+      <main>
+        <h2>Daily set</h2>
+        <a class="daily-card" href="https://rewards.bing.com/quiz">+10 Start quiz</a>
+        <h2>Your activity</h2>
+        <div id="overlay"></div>
+      </main>`;
+    const [heading, nextHeading] = document.querySelectorAll("h2");
+    const card = document.querySelector("a");
+    heading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
+    });
+    card.getBoundingClientRect = () => ({
+      width: 220,
+      height: 70,
+      top: 60,
+      bottom: 130,
+      left: 20,
+      right: 240,
+    });
+    nextHeading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 180,
+      bottom: 210,
+      left: 0,
+      right: 200,
+    });
+    card.scrollIntoView = () => {};
+    card.click = jest.fn();
+    document.elementFromPoint = jest.fn(() =>
+      document.querySelector("#overlay"),
+    );
+
+    const result = new Function(
+      "return (" + createDashboardActivityScript([], 1, true) + ")",
+    )();
+
+    expect(result.clicked).toHaveLength(0);
+    expect(result.openedKeys).toHaveLength(0);
+    expect(card.click).not.toHaveBeenCalled();
+  });
 });
 
 describe("createEarnActivityScript", () => {
@@ -196,6 +245,61 @@ describe("createSolveActivityScript", () => {
     const script = createSolveActivityScript();
     expect(script).toContain("(function()");
     expect(script).toContain("})()");
+  });
+
+  test("returns a trusted press point without synthetic click", () => {
+    document.body.innerHTML = `<button data-testid="answer-0">Answer A</button>`;
+    const button = document.querySelector("button");
+    button.getBoundingClientRect = () => ({
+      width: 160,
+      height: 40,
+      top: 50,
+      bottom: 90,
+      left: 20,
+      right: 180,
+    });
+    button.scrollIntoView = () => {};
+    button.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => button);
+
+    const result = new Function(
+      "return (" + createSolveActivityScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: true,
+      text: "Answer A",
+      pressPoint: { x: 100, y: 70 },
+    });
+    expect(button.click).not.toHaveBeenCalled();
+  });
+
+  test("refuses a solver click when another element covers the target", () => {
+    document.body.innerHTML = `<button data-testid="answer-0">Answer A</button><div id="overlay"></div>`;
+    const button = document.querySelector("button");
+    button.getBoundingClientRect = () => ({
+      width: 160,
+      height: 40,
+      top: 50,
+      bottom: 90,
+      left: 20,
+      right: 180,
+    });
+    button.scrollIntoView = () => {};
+    button.click = jest.fn();
+    document.elementFromPoint = jest.fn(() =>
+      document.querySelector("#overlay"),
+    );
+
+    const result = new Function(
+      "return (" + createSolveActivityScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: false,
+      reason: "target covered or moved",
+    });
+    expect(button.click).not.toHaveBeenCalled();
   });
 });
 

@@ -78,10 +78,18 @@ function activityDomHelpers() {
 			};
 			const keyFor = (target, type, text) => {
 				const href = target.href || target.closest?.('a[href]')?.href || '';
-				const rect = target.getBoundingClientRect();
-				return href ?
-					href :
-					text + '|' + Math.round(rect.top) + '|' + Math.round(rect.left);
+				if (href) return href;
+				// Viewport coordinates are not an identity. Rewards scrolls/lazy-renders
+				// between passes, so coordinate-based keys made the same button look like
+				// a different activity and could move a later trusted click onto a
+				// neighbour. Prefer DOM identity, then the full card text.
+				const semantic = normalize([
+					target.id,
+					target.getAttribute?.('data-testid'),
+					target.getAttribute?.('aria-label'),
+					target.getAttribute?.('title')
+				].filter(Boolean).join('|')).toLowerCase();
+				return type + '|' + (semantic || normalize(text).toLowerCase());
 			};
 			const openTarget = (target, type, text) => {
 				if (!target || !isVisible(target) || clicked.length >= safetyLimit) return false;
@@ -280,9 +288,11 @@ ${activityDomHelpers()}
 						pressPoint = { x, y };
 						return true;
 					}
-					// Covered point would make the trusted CDP press hit the overlay,
-					// so skip CDP for this card and use the synthetic path below.
+					// Covered/stale coordinates must fail closed. A synthetic click is
+					// ignored by React Aria often enough to poison click bookkeeping,
+					// and a trusted press here would hit the overlay instead.
 					pressPoint = null;
+					return false;
 				}
 				try {
 					target.focus?.({ preventScroll: true });
@@ -543,9 +553,10 @@ ${activityDomHelpers()}
 						pressPoint = { x, y };
 						return true;
 					}
-					// Covered point would make the trusted CDP press hit the overlay,
-					// so skip CDP for this card and use the synthetic path below.
+					// Do not report a synthetic fallback as a successful click. Leave
+					// the card unvisited so popup dismissal / a later pass can retry it.
 					pressPoint = null;
+					return false;
 				}
 				try {
 					target.focus?.({ preventScroll: true });
@@ -686,9 +697,10 @@ ${activityDomHelpers()}
 	`;
 }
 
-export function createSolveActivityScript() {
+export function createSolveActivityScript(deferToCdp = false) {
   return `
 			(function() {
+				const deferToCdp = ${Boolean(deferToCdp)};
 				const normalize = (value) => (value || '').replace(/\\s+/g, ' ').trim();
 				const isVisible = (el) => {
 					if (!el) return false;
@@ -780,6 +792,21 @@ export function createSolveActivityScript() {
 						document.documentElement.style.scrollBehavior = htmlStyle;
 						document.body.style.scrollBehavior = bodyStyle;
 					} catch (_) {}
+					const rect = target.getBoundingClientRect();
+					const cx = Math.max(1, Math.min(window.innerWidth - 2, rect.left + rect.width / 2));
+					const cy = Math.max(1, Math.min(window.innerHeight - 2, rect.top + rect.height / 2));
+					const hit = document.elementFromPoint?.(cx, cy);
+					if (deferToCdp) {
+						if (!hit || !(target === hit || target.contains(hit) || hit.contains(target))) {
+							return { clicked: false, reason: 'target covered or moved', url: location.href };
+						}
+						return {
+							clicked: true,
+							text: text.slice(0, 80) || target.tagName,
+							pressPoint: { x: cx, y: cy },
+							url: location.href
+						};
+					}
 					target.click();
 					return { clicked: true, text: text.slice(0, 80) || target.tagName, url: location.href };
 				}

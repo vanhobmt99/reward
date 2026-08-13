@@ -3396,7 +3396,7 @@ async function completeRewardActivityTab(tabId) {
 
     await enableDomains(tabId);
 
-    const solveScript = createSolveActivityScript();
+    const solveScript = createSolveActivityScript(true);
 
     for (let attempt = 0; attempt < 8; attempt++) {
       const result = await race(
@@ -3416,6 +3416,21 @@ async function completeRewardActivityTab(tabId) {
       });
       const value = result?.result?.value;
       if (!value?.clicked) break;
+      if (
+        !value.pressPoint ||
+        !(await dispatchTrustedPress(
+          tabId,
+          value.pressPoint,
+          "ACTIVITY SOLVER",
+        ))
+      ) {
+        logs &&
+          log(
+            `[ACTIVITY] Reward tab ${tabId} target moved before the trusted click.`,
+            "warning",
+          );
+        break;
+      }
 
       interactions++;
       logs &&
@@ -3572,6 +3587,39 @@ async function dispatchTrustedPress(tabId, point, context = "ACTIVITY") {
   }
 }
 
+// Runtime.evaluate and Input.dispatchMouseEvent cross process boundaries. The
+// Rewards React layout can shift after the first scan (lazy images, sticky
+// headings, collapsing cards), making the original point stale. Re-scan once
+// immediately before the trusted press and require the same stable activity key;
+// if another card now occupies that slot, fail closed instead of mis-clicking it.
+async function refreshActivityPressPoint(
+  tabId,
+  scriptFactory,
+  blockedKeys,
+  expectedKey,
+  context,
+) {
+  if (!expectedKey) return null;
+  const freshResult = await race(
+    chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+      expression: scriptFactory([...blockedKeys], 1, true),
+      returnByValue: true,
+    }),
+    mediumDelay,
+    `Failed to refresh ${context} click target.`,
+  ).catch(() => null);
+  const fresh = freshResult?.result?.value;
+  if (fresh?.openedKeys?.[0] !== expectedKey || !fresh?.pressPoint) {
+    logs &&
+      log(
+        `[${context}] Activity target changed before click; skipping stale point.`,
+        "warning",
+      );
+    return null;
+  }
+  return fresh.pressPoint;
+}
+
 // The Rewards pages are React SPAs: `wait(tabId)` resolves on document load,
 // well before the cards render. Poll for the target section heading so the
 // first click pass doesn't fire against an empty page (the classic "first icon
@@ -3655,11 +3703,14 @@ async function runDashboardActivityPass(
   let clickedItems = value.clicked || [];
   const skippedItems = value.skipped || [];
   if (clickedItems.length > 0 && value.pressPoint) {
-    const pressed = await dispatchTrustedPress(
+    const freshPoint = await refreshActivityPressPoint(
       tabId,
-      value.pressPoint,
+      createDashboardActivityScript,
+      blockedKeys,
+      value.openedKeys?.[0],
       "DAILY SET",
     );
+    const pressed = await dispatchTrustedPress(tabId, freshPoint, "DAILY SET");
     if (!pressed) clickedItems = [];
   }
   if (value.reason) {
@@ -3820,9 +3871,16 @@ async function runEarnActivityPass(
   let clickedItems = value.clicked || [];
   const skippedItems = value.skipped || [];
   if (clickedItems.length > 0 && value.pressPoint) {
+    const freshPoint = await refreshActivityPressPoint(
+      tabId,
+      createEarnActivityScript,
+      blockedKeys,
+      value.openedKeys?.[0],
+      "KEEP EARNING",
+    );
     const pressed = await dispatchTrustedPress(
       tabId,
-      value.pressPoint,
+      freshPoint,
       "KEEP EARNING",
     );
     if (!pressed) clickedItems = [];
