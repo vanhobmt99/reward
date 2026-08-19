@@ -2,10 +2,8 @@ const { loadEsmModule } = require("./esm-loader.js");
 
 const {
   DEFAULT_POINTS_PER_SEARCH,
-  MAX_MAKEUP_SEARCHES,
   createSearchCreditGoal,
   isSearchCreditGoalReached,
-  getSearchIterationLimit,
   shouldContinueSearch,
   assessSearchCheckpoint,
 } = loadEsmModule("../js/search-credit.js");
@@ -55,61 +53,27 @@ describe("search credit goals", () => {
 });
 
 describe("exact plan size (no make-up)", () => {
-  test("iteration limit equals the requested plan only", () => {
-    expect(MAX_MAKEUP_SEARCHES).toBe(0);
-    expect(getSearchIterationLimit(5)).toBe(5);
-    expect(getSearchIterationLimit(20)).toBe(20);
-    expect(getSearchIterationLimit(100)).toBe(100);
-    expect(getSearchIterationLimit(0)).toBe(0);
-  });
-
   test("runs exactly the requested iterations and stops", () => {
     expect(
-      shouldContinueSearch({
-        attemptedIterations: 4,
-        requestedSearches: 5,
-        successfulSearches: 4,
-        iterationLimit: 5,
-        creditGoal: { target: 15 },
-        snapshot: { pcProgress: 0 },
-        counterField: "pcProgress",
-      }),
+      shouldContinueSearch({ attemptedIterations: 4, requestedSearches: 5 }),
     ).toBe(true);
     expect(
-      shouldContinueSearch({
-        attemptedIterations: 5,
-        requestedSearches: 5,
-        successfulSearches: 5,
-        iterationLimit: 5,
-        creditGoal: { target: 15 },
-        snapshot: { pcProgress: 12 },
-        counterField: "pcProgress",
-      }),
+      shouldContinueSearch({ attemptedIterations: 5, requestedSearches: 5 }),
     ).toBe(false);
   });
 
-  test("does not add searches when the point target is short", () => {
-    expect(
-      shouldContinueSearch({
-        attemptedIterations: 5,
-        requestedSearches: 5,
-        successfulSearches: 5,
-        iterationLimit: 5,
-        creditGoal: { target: 15 },
-        snapshot: { pcProgress: 9 },
-        counterField: "pcProgress",
-      }),
-    ).toBe(false);
-  });
-
-  test("does not extend past the plan when successes are short either", () => {
-    // Failures inside the plan still consume a slot; no free make-up attempts.
+  test("counter state cannot extend the plan", () => {
+    // A short point total, a lagging counter, or failed attempts inside the plan
+    // must never buy extra iterations — the desk/mob counts on the form are
+    // exact, and anything the caller passes beyond them is ignored by design.
     expect(
       shouldContinueSearch({
         attemptedIterations: 5,
         requestedSearches: 5,
         successfulSearches: 3,
-        iterationLimit: 5,
+        creditGoal: { target: 15 },
+        snapshot: { pcProgress: 0 },
+        counterField: "pcProgress",
       }),
     ).toBe(false);
   });

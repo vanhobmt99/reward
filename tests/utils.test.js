@@ -27,7 +27,6 @@ const modifiedContent = utilsContent.replace(/export\s+\{[\s\S]*?\};/, () => {
     "get",
     "resetRuntime",
     "applyConfigDefaults",
-    "getRewardsCounterField",
     "isRewardsSearchCounterComplete",
     "getRewardsSearchCounterDone",
     "isDailySearchCounterDone",

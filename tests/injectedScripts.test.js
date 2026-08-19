@@ -9,7 +9,6 @@ const {
   createEarnActivityScript,
   createSolveActivityScript,
   createClaimReadyScript,
-  createResultPickScript,
 } = loadEsmModule("../js/injected-scripts.js");
 
 // Compile (but never invoke) a script string to assert it is syntactically
@@ -418,169 +417,205 @@ describe("createClaimReadyScript", () => {
   });
 });
 
-describe("createResultPickScript", () => {
-  test("produces syntactically valid JS", () => {
-    assertCompiles(createResultPickScript());
-  });
+// Markup copied from a saved rewards.bing.com page (2026 React/Tailwind UI).
+// The reward value is a BARE number in a pill badge — there is no "points"/"pts"
+// word anywhere on the card, which is what the text-only patterns used to miss.
+function realRewardsCard(title, subtitle, badge, status = "") {
+  return `
+    <a class="group/ctrl cursor-pointer rounded-cornerCardDefault"
+       href="https://www.bing.com/search?q=Trip+to+Boston&FORM=tgrew4"
+       target="_blank" rel="noopener noreferrer" tabindex="0" data-react-aria-pressable="true">
+      <div class="flex size-full gap-gapBetweenContentSmall p-paddingCardDefault overflow-hidden rounded-cornerCardDefault bg-bgCardOnPrimaryDefaultRest cursor-pointer flex-row">
+        <div class="flex grow flex-col p-paddingCardBodyDefaultOutside gap-2">
+          <div class="flex grow flex-col gap-0.5">
+            <p class="line-clamp-3 text-globalBody2Strong">${title}</p>
+            <p class="line-clamp-3 text-fgCtrlNeutralSecondaryRest">${subtitle}</p>
+          </div>
+          <div class="flex w-full items-center gap-2">
+            <div class="flex h-5 w-fit min-w-5 shrink-0 items-center justify-center gap-0.5 rounded-cornerCircular px-1.5 bg-statusSuccessRewardsBg text-fgCtrlOnImage">
+              <svg viewBox="0 0 7 6" class="size-2 text-fgCtrlOnImage"></svg>
+              <p class="text-metadata text-fgCtrlOnImage">${badge}</p>
+            </div>
+            <div class="flex grow items-center justify-end gap-0.5">
+              <div class="line-clamp-2 text-end text-metadata text-fgCtrlNeutralSecondaryRest">${status}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </a>`;
+}
 
-  // jsdom has no layout, so each link gets a faked in-viewport box.
-  function stageSerp(html, boxes = {}) {
-    document.body.innerHTML = html;
-    window.innerHeight = 800;
-    for (const link of document.querySelectorAll("a")) {
-      const box = boxes[link.getAttribute("href")] || {
-        width: 300,
-        height: 24,
-        top: 100,
-        bottom: 124,
-        left: 40,
-        right: 340,
-      };
-      link.getBoundingClientRect = () => box;
-    }
-    for (const item of document.querySelectorAll("li")) {
-      item.getBoundingClientRect = () => ({
-        width: 600,
-        height: 90,
-        top: 90,
-        bottom: 180,
-        left: 20,
-        right: 620,
-      });
-    }
-  }
-
-  function run() {
-    return new Function("return (" + createResultPickScript() + ")")();
-  }
-
-  test("returns the centre point of an organic result", () => {
-    stageSerp(
-      '<div id="b_results"><li class="b_algo"><h2>' +
-        '<a href="https://example.com/article">Example article</a>' +
-        "</h2></li></div>",
-    );
-    expect(run()).toMatchObject({
-      found: true,
-      x: 190,
-      y: 112,
-      title: "Example article",
-      total: 1,
+describe("live rewards.bing.com markup", () => {
+  test("Keep earning clicks a card whose points are a bare badge number", () => {
+    document.body.innerHTML = `
+      <main>
+        <h2>Keep earning</h2>
+        ${realRewardsCard("Quote of the day", "Start your day with a quote", "5")}
+      </main>`;
+    const heading = document.querySelector("h2");
+    const card = document.querySelector("a");
+    heading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
     });
-  });
+    card.getBoundingClientRect = () => ({
+      width: 320,
+      height: 120,
+      top: 60,
+      bottom: 180,
+      left: 20,
+      right: 340,
+    });
+    card.scrollIntoView = () => {};
+    document.elementFromPoint = jest.fn(() => card);
+    card.click = jest.fn();
 
-  test("reports not-found when the results container is missing", () => {
-    document.body.innerHTML = "<div>no serp here</div>";
-    expect(run()).toEqual({ found: false, reason: "no-results-container" });
-  });
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 3) + ")",
+    )();
 
-  test("skips ads", () => {
-    stageSerp(
-      '<div id="b_results">' +
-        '<li class="b_algo b_ad"><h2><a href="https://ad.example/x">Ad</a></h2></li>' +
-        "</div>",
+    expect(result.skipped.some((s) => s.reason === "no visible points")).toBe(
+      false,
     );
-    expect(run()).toEqual({ found: false, reason: "no-candidates" });
+    expect(result.clicked).toHaveLength(1);
+    expect(card.click).toHaveBeenCalled();
   });
 
-  test("skips answer/PAA blocks", () => {
-    stageSerp(
-      '<div id="b_results"><div class="b_ans">' +
-        '<li class="b_algo"><h2><a href="https://example.com/paa">PAA</a></h2></li>' +
-        "</div></div>",
-    );
-    expect(run()).toEqual({ found: false, reason: "no-candidates" });
+  test("Keep earning still skips a completed bare-badge card", () => {
+    document.body.innerHTML = `
+      <main>
+        <h2>Keep earning</h2>
+        ${realRewardsCard("Quote of the day", "Start your day with a quote", "5", "Completed")}
+      </main>`;
+    const heading = document.querySelector("h2");
+    const card = document.querySelector("a");
+    heading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
+    });
+    card.getBoundingClientRect = () => ({
+      width: 320,
+      height: 120,
+      top: 60,
+      bottom: 180,
+      left: 20,
+      right: 340,
+    });
+    card.scrollIntoView = () => {};
+    document.elementFromPoint = jest.fn(() => card);
+    card.click = jest.fn();
+
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 3) + ")",
+    )();
+
+    expect(result.clicked).toHaveLength(0);
+    expect(card.click).not.toHaveBeenCalled();
   });
 
-  test("skips Microsoft-owned destinations", () => {
-    // Visiting rewards/login would disturb the very session being used.
-    stageSerp(
-      '<div id="b_results">' +
-        '<li class="b_algo"><h2><a href="https://rewards.bing.com/x">Rewards</a></h2></li>' +
-        '<li class="b_algo"><h2><a href="https://www.microsoft.com/y">MS</a></h2></li>' +
-        '<li class="b_algo"><h2><a href="https://msn.com/z">MSN</a></h2></li>' +
-        "</div>",
-    );
-    expect(run()).toEqual({ found: false, reason: "no-candidates" });
+  test("Daily set asks for another scroll when its cards are below the fold", () => {
+    // The heading enters the viewport at its BOTTOM edge, so every card under it
+    // is still off-screen. The pass must scroll instead of reporting nothing.
+    document.body.innerHTML = `
+      <main>
+        <h2>Daily set</h2>
+        ${realRewardsCard("Boston harbor summer sailboats", "Sailboats and seafood", "10")}
+      </main>`;
+    const heading = document.querySelector("h2");
+    const card = document.querySelector("a");
+    heading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: window.innerHeight - 28,
+      bottom: window.innerHeight - 2,
+      left: 0,
+      right: 200,
+    });
+    card.getBoundingClientRect = () => ({
+      width: 320,
+      height: 120,
+      top: window.innerHeight + 40,
+      bottom: window.innerHeight + 160,
+      left: 20,
+      right: 340,
+    });
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      value: window.innerHeight * 4,
+      configurable: true,
+    });
+    window.scrollBy = jest.fn();
+
+    const result = new Function(
+      "return (" + createDashboardActivityScript([], 1, true) + ")",
+    )();
+
+    expect(result.retry).toBe(true);
+    expect(result.reason).toMatch(/scrolled for more Daily set cards/i);
+    expect(window.scrollBy).toHaveBeenCalled();
   });
 
-  test("accepts a bing /ck/a wrapper, which is how organic links are served", () => {
-    stageSerp(
-      '<div id="b_results"><li class="b_algo"><h2>' +
-        '<a href="https://www.bing.com/ck/a?!&p=1&u=aHR0cHM6Ly9leGFtcGxlLmNvbQ">Wrapped</a>' +
-        "</h2></li></div>",
-    );
-    expect(run()).toMatchObject({ found: true, title: "Wrapped" });
+  test("claim reads a thousands-separated pending count", () => {
+    document.body.innerHTML = `
+      <div data-react-aria-pressable tabindex="0">
+        <p>Ready to claim</p>
+        <p>1,250</p>
+        <p>Claim</p>
+      </div>`;
+    const cardEl = document.querySelector("[data-react-aria-pressable]");
+    cardEl.getBoundingClientRect = () => ({
+      width: 120,
+      height: 40,
+      top: 0,
+      bottom: 40,
+      left: 0,
+      right: 120,
+    });
+    cardEl.scrollIntoView = () => {};
+    cardEl.click = jest.fn();
+
+    const result = new Function(
+      "return (" + createClaimReadyScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({ clicked: true, count: 1250 });
   });
 
-  test("skips non-http schemes", () => {
-    stageSerp(
-      '<div id="b_results">' +
-        '<li class="b_algo"><h2><a href="javascript:void(0)">JS</a></h2></li>' +
-        '<li class="b_algo"><h2><a href="#anchor">Anchor</a></h2></li>' +
-        "</div>",
-    );
-    expect(run()).toEqual({ found: false, reason: "no-candidates" });
-  });
+  test("claim still short-circuits when the card also shows a points balance", () => {
+    // A wrapper that carries both "Available points 3,549" and "Ready to claim 0"
+    // must not report 549 pending and go hunting for a confirm button.
+    document.body.innerHTML = `
+      <div data-react-aria-pressable tabindex="0">
+        <p>Available points</p>
+        <p>3,549</p>
+        <p>Ready to claim</p>
+        <p>0</p>
+        <p>Claim</p>
+      </div>`;
+    const cardEl = document.querySelector("[data-react-aria-pressable]");
+    cardEl.getBoundingClientRect = () => ({
+      width: 120,
+      height: 40,
+      top: 0,
+      bottom: 40,
+      left: 0,
+      right: 120,
+    });
+    cardEl.scrollIntoView = () => {};
+    cardEl.click = jest.fn();
 
-  test("skips links scrolled outside the viewport", () => {
-    // Pressing coordinates that are off-screen would land on whatever else is
-    // at that point instead of the intended result.
-    stageSerp(
-      '<div id="b_results"><li class="b_algo"><h2>' +
-        '<a href="https://example.com/below">Below the fold</a>' +
-        "</h2></li></div>",
-      {
-        "https://example.com/below": {
-          width: 300,
-          height: 24,
-          top: 1200,
-          bottom: 1224,
-          left: 40,
-          right: 340,
-        },
-      },
-    );
-    expect(run()).toEqual({ found: false, reason: "no-candidates" });
-  });
+    const result = new Function(
+      "return (" + createClaimReadyScript(true) + ")",
+    )();
 
-  test("reports whether the link opens in a new tab", () => {
-    stageSerp(
-      '<div id="b_results"><li class="b_algo"><h2>' +
-        '<a href="https://example.com/new" target="_BLANK">New tab</a>' +
-        "</h2></li></div>",
-    );
-    expect(run()).toMatchObject({ found: true, newTab: true });
-  });
-
-  test("only ever picks from the top five results", () => {
-    const items = Array.from(
-      { length: 12 },
-      (_, i) =>
-        '<li class="b_algo"><h2><a href="https://example.com/r' +
-        i +
-        '">Result ' +
-        i +
-        "</a></h2></li>",
-    ).join("");
-    stageSerp('<div id="b_results">' + items + "</div>");
-    const titles = new Set();
-    for (let i = 0; i < 200; i++) titles.add(run().title);
-    expect(titles.size).toBeGreaterThan(1);
-    for (const title of titles) {
-      expect(Number(title.split(" ")[1])).toBeLessThan(5);
-    }
-  });
-
-  test("never clicks page-side; it only reports a point", () => {
-    stageSerp(
-      '<div id="b_results"><li class="b_algo"><h2>' +
-        '<a href="https://example.com/a">A</a>' +
-        "</h2></li></div>",
-    );
-    const link = document.querySelector("a");
-    link.click = jest.fn();
-    run();
-    expect(link.click).not.toHaveBeenCalled();
+    expect(result).toMatchObject({ clicked: false, count: 0 });
+    expect(cardEl.click).not.toHaveBeenCalled();
   });
 });

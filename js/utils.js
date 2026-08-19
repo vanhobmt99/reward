@@ -314,10 +314,6 @@ function pickActiveRewardsCounter(counterArray) {
   return active || items[items.length - 1];
 }
 
-function getRewardsCounterField(counterArray, key) {
-  return readRewardsCounterAttr(pickActiveRewardsCounter(counterArray), key);
-}
-
 function isRewardsSearchCounterComplete(counterArray) {
   const active = pickActiveRewardsCounter(counterArray);
   if (!active) return false;
@@ -369,7 +365,6 @@ export {
   atomicUpdate,
   resetRuntime,
   applyConfigDefaults,
-  getRewardsCounterField,
   isRewardsSearchCounterComplete,
   getRewardsSearchCounterDone,
   isDailySearchCounterDone,

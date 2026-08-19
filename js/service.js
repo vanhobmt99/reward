@@ -82,7 +82,6 @@ import {
   DEFAULT_POINTS_PER_SEARCH,
   createSearchCreditGoal,
   isSearchCreditGoalReached,
-  getSearchIterationLimit,
   shouldContinueSearch,
   assessSearchCheckpoint,
 } from "/js/search-credit.js";
@@ -155,9 +154,6 @@ const emulationCommandTimeout = 5000;
 const emulationAttempts = 3;
 const searchRetryDelayMin = 1800;
 const searchRetryDelayMax = 3200;
-// Organic result-link visits are intentionally not implemented on the search
-// path: the old 9–26s dwell + third-party navigation slowed runs and left the
-// RSA tab off Bing (breaking the next type/submit). Read-delay is enough.
 const finalSearchSettleDelayMax = 8000;
 const runtimeDefaults = { ...config.runtime };
 
@@ -513,16 +509,11 @@ function getBackgroundTopicLocale() {
       "en-US",
   );
   const [rawLanguage, rawRegion] = locale.split("-");
-  const configuredRegion = String(config?.user?.countryCode || "").trim();
   return {
     languageCode: /^[a-z]{2,3}$/i.test(rawLanguage)
       ? rawLanguage.toLowerCase()
       : "en",
-    regionCode: /^[a-z]{2}$/i.test(configuredRegion)
-      ? configuredRegion.toUpperCase()
-      : /^[a-z]{2}$/i.test(rawRegion)
-        ? rawRegion.toUpperCase()
-        : "US",
+    regionCode: /^[a-z]{2}$/i.test(rawRegion) ? rawRegion.toUpperCase() : "US",
   };
 }
 
@@ -710,9 +701,8 @@ function hasActivityQuota() {
   );
 }
 
-function hasActivityWork(options = {}) {
+function hasActivityWork() {
   if (!config?.control?.act) return false;
-  if (options.ignoreActivityLimit) return true;
   return hasActivityQuota();
 }
 
@@ -1001,7 +991,6 @@ async function recordActivityRun(memory = null) {
   await saveActivityMemory(current);
   config.runtime.activityRunDate = current.date;
   config.runtime.activityRunsToday = current.runs;
-  config.runtime.activityLastRunAt = runAt;
 }
 
 async function fetchRewardsSnapshot() {
@@ -1143,7 +1132,18 @@ async function sendTabMessage(
   return null;
 }
 
-async function wait(tabId, interruptible = true) {
+/**
+ * Wait for a tab to finish loading.
+ *
+ * `chrome.tabs.update()` resolves before the navigation commits, so a bare
+ * `tabs.get` right after it still reports the OLD document as `complete` and
+ * this used to resolve instantly against the page we were navigating away from.
+ * Callers then typed into a doomed document: the pending navigation threw the
+ * text away and the iteration burned all its attempts. Pass
+ * `{ awayFrom: <pre-navigation url> }` after a `tabs.update` so "loaded" means
+ * "loaded something else".
+ */
+async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
   logs && log(`[WAIT] Waiting for tab ${tabId} to load...`);
   const startTime = Date.now();
   const startedAtGen = _getRunGeneration();
@@ -1166,9 +1166,15 @@ async function wait(tabId, interruptible = true) {
         );
       resolve(success);
     };
-    const onUpdated = (updatedTabId, changeInfo) => {
+    // `awayFrom` is only a gate on "is this still the old document?" — it never
+    // makes the wait stricter about WHICH url arrives, so a redirect chain still
+    // satisfies it.
+    const isStale = (url) => Boolean(awayFrom) && url === awayFrom;
+    const onUpdated = (updatedTabId, changeInfo, tab) => {
       if (updatedTabId !== tabId) return;
-      if (changeInfo.status === "complete") done(true);
+      if (changeInfo.status !== "complete") return;
+      if (isStale(changeInfo.url || tab?.url || "")) return;
+      done(true);
     };
     timer = setTimeout(() => {
       done(false, `Tab ${tabId} did not load within the timeout period.`);
@@ -1191,7 +1197,7 @@ async function wait(tabId, interruptible = true) {
     chrome.tabs
       .get(tabId)
       .then((tab) => {
-        if (tab.status === "complete") {
+        if (tab.status === "complete" && !isStale(tab.url || "")) {
           done(true);
         }
       })
@@ -2198,9 +2204,7 @@ async function click(interruptible = true) {
     success = success || Boolean(loginResponse?.success);
     await delay(shortestDelay, interruptible);
   }
-  if (needPatch) {
-    needPatch = false;
-  }
+  needPatch = false;
   return success;
 }
 
@@ -2253,10 +2257,7 @@ async function refillQueryBurst() {
     if (!template) return false;
 
     const currentYear = new Date().getFullYear();
-    const country = config?.user?.country || "";
-    seed = template
-      .replace(/\[year\]/g, currentYear.toString())
-      .replace(/\[country\]/g, country);
+    seed = template.replace(/\[year\]/g, currentYear.toString());
     sourceLabel = niche;
   }
   logs &&
@@ -2331,6 +2332,44 @@ async function typeBackspace(tabId) {
   }
 }
 
+/**
+ * Read the search box back and repair it if the typed text drifted from
+ * `expected`.
+ *
+ * `planTypingSteps` promises its steps reconstruct the query exactly, but that
+ * promise is only kept if every keystroke lands — and `typeBackspace` above
+ * deliberately swallows a dropped Backspace. A lost correction leaves the typo
+ * in the box ("rewreview"), Bing searches and CREDITS that text, and then
+ * `perform()` compares `q` against `searchQuery` exactly, decides the search
+ * failed, and re-submits duplicates that earn nothing. Repairing the box costs
+ * one CDP round-trip and saves the whole iteration.
+ *
+ * Returns `{ repaired, value }`, or null when the box could not be read at all
+ * (caller then falls back to the content script).
+ */
+async function syncSearchInput(tabId, expected) {
+  const expression = `(function() {
+		const input = document.querySelector("#sb_form_q");
+		if (!input) return null;
+		const want = ${JSON.stringify(expected)};
+		if (input.value === want) return { repaired: false, value: input.value };
+		input.focus();
+		input.value = want;
+		input.dispatchEvent(new Event("input", { bubbles: true }));
+		return { repaired: true, value: input.value };
+	})()`;
+  const result = await race(
+    chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+      expression,
+      allowUnsafeEvalBlockedByCSP: true,
+      returnByValue: true,
+    }),
+    shortestDelay,
+    `Failed to verify search input for tab ${tabId} within timeout.`,
+  ).catch(() => null);
+  return result?.result?.value ?? null;
+}
+
 // `reuse` re-types the query already in `searchQuery` instead of consuming the
 // next one from the topic run. A retry after a failed submit is the same person
 // re-entering the same search, and pulling a fresh query would both change the
@@ -2374,7 +2413,9 @@ async function query(interruptible = true, options = {}) {
     const pageUrl = await getTabUrl(tabId);
     if (!isBingPageUrl(pageUrl)) {
       await chrome.tabs.update(tabId, { url: bing, active: true });
-      await wait(tabId);
+      // awayFrom: without it this resolves on the page we are leaving and the
+      // query below gets typed into a document that is about to be discarded.
+      await wait(tabId, true, { awayFrom: pageUrl });
       await delay(shortestDelay, interruptible);
     }
     const expression = `(function() {
@@ -2397,8 +2438,9 @@ async function query(interruptible = true, options = {}) {
       `Failed to clear search input for tab ${tabId} within timeout.`,
     ).catch(() => null);
     if (cleared?.result?.value !== true) {
+      const beforeReload = await getTabUrl(tabId);
       await chrome.tabs.update(tabId, { url: bing, active: true });
-      await wait(tabId);
+      await wait(tabId, true, { awayFrom: beforeReload });
       await delay(shortestDelay, interruptible);
       cleared = await race(
         chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
@@ -2447,6 +2489,20 @@ async function query(interruptible = true, options = {}) {
         typingDelayMin + Math.random() * (typingDelayMax - typingDelayMin),
         interruptible,
       );
+    }
+    // A swallowed Backspace leaves a typo in the box; submitting that costs the
+    // whole iteration (see syncSearchInput). Verify and repair before the caller
+    // presses Enter.
+    const synced = await syncSearchInput(tabId, searchQuery);
+    if (synced === null) {
+      throw new Error("Search input vanished before submit.");
+    }
+    if (synced.repaired) {
+      logs &&
+        log(
+          `[QUERY] - Typed text drifted from the query; repaired before submit.`,
+          "warning",
+        );
     }
     debuggerTypedQuery = true;
     logs && log(`[QUERY] - Search query typed: ${searchQuery}`, "update");
@@ -2502,7 +2558,11 @@ function isBingPageUrl(url) {
  * the RSA tab must stay on Bing so the next type/submit finds #sb_form_q.
  * Best-effort — never fails the search that already scored.
  */
-async function stabilizeAfterSearch(tabId, existingTabIds, interruptible = true) {
+async function stabilizeAfterSearch(
+  tabId,
+  existingTabIds,
+  interruptible = true,
+) {
   try {
     const opened = (await chrome.tabs.query({})).filter(
       (tab) => tab.id !== tabId && !existingTabIds.has(tab.id),
@@ -2623,8 +2683,12 @@ async function perform(interruptible = true) {
         url !== originalUrl && isConfirmedBingSearchUrl(url, searchQuery),
       longestDelay,
     );
+    // The load result used to be discarded, so a SERP that never rendered was
+    // indistinguishable from a clean one in the logs. Keep it for the diagnostic
+    // below rather than to gate success (see the comment at the return).
+    let serpLoaded = true;
     if (navigation.success) {
-      await wait(tabId);
+      serpLoaded = await wait(tabId, interruptible);
     } else if (submitted) {
       // Debugger Enter did not navigate — try the content-script submit once
       // before declaring failure. Covers pages where the input lost focus.
@@ -2643,7 +2707,7 @@ async function perform(interruptible = true) {
             url !== originalUrl && isConfirmedBingSearchUrl(url, searchQuery),
           longestDelay,
         );
-        if (retryNav.success) await wait(tabId);
+        if (retryNav.success) serpLoaded = await wait(tabId, interruptible);
       } else {
         await delay(mediumDelay, interruptible);
       }
@@ -2657,6 +2721,17 @@ async function perform(interruptible = true) {
       newUrl !== originalUrl &&
       isConfirmedBingSearchUrl(newUrl, searchQuery)
     ) {
+      // Bing credits a search on the REQUEST, not on the render, so a slow or
+      // half-drawn results page is still a scored search. Downgrading it to a
+      // failure here would trigger a duplicate re-submit (which earns nothing)
+      // and mark the iteration failed — so log it and keep the point.
+      if (!serpLoaded) {
+        logs &&
+          log(
+            `[PERFORM] - Results page did not finish loading in time; still counting the search.`,
+            "warning",
+          );
+      }
       logs &&
         log(
           `[PERFORM] - Search performed. URL changed from ${originalUrl} to ${newUrl}`,
@@ -2762,8 +2837,8 @@ async function search(searches, min, max, interruptible = true) {
   // A search that navigated successfully can still earn nothing (half-logged-in
   // session after the mobile cookie clear, silently detached debugger dropping
   // the mobile UA, Bing rate limiting). Compare the real Rewards counter against
-  // our local progress for stall/quota stops only — never pad the plan with
-  // make-up searches. The desk/mob counts on the form are exact.
+  // our local progress so a full quota can stop the phase — never to pad the
+  // plan with make-up searches. The desk/mob counts on the form are exact.
   const mobilePhase = Boolean(config?.runtime?.mobile);
   const counterField = mobilePhase ? "mobProgress" : "pcProgress";
   const counterMaxField = mobilePhase ? "mobMax" : "pcMax";
@@ -2778,18 +2853,19 @@ async function search(searches, min, max, interruptible = true) {
   // requiring a third costs one extra recovery round and avoids abandoning a
   // run that was still being credited.
   const MAX_STALL_RECOVERIES = 3;
-  const POINT_SETTLE_RECHECKS = 2;
+  // The Rewards counter is published in batches that can lag the searches that
+  // fed it by minutes, so 2 rechecks (~6s) was nowhere near enough to tell "API
+  // is behind" from "account is not being credited" — and guessing the latter
+  // threw away the rest of the plan. 5 rechecks buys ~15s per checkpoint.
+  const POINT_SETTLE_RECHECKS = 5;
   let checkpointSnapshot = null;
   let latestRewardsSnapshot = null;
   let creditGoal = null;
   let checkpointDone = 0;
   let checkpointDelayBoost = 1;
   let consecutiveStallRecoveries = 0;
-  // Equals the plan size (no make-up allowance).
-  const iterationLimit = getSearchIterationLimit(searches);
-  // Set when the counter says there is nothing left to earn — either the daily
-  // quota is full, or Bing has stopped crediting and recovery did not help.
-  // Both mean "stop", and neither is a failure of the search phase.
+  // Set when there is provably nothing left to earn (daily quota full) or the
+  // Rewards session is unusable. A merely lagging counter is NOT a stop reason.
   let earlyStopReason = null;
 
   const ensureRewardsSessionForSearches = async (reason) => {
@@ -2820,14 +2896,30 @@ async function search(searches, min, max, interruptible = true) {
           `[SEARCH] Rewards session unavailable ${reason}; re-login attempt ${attempt}/3.`,
           "warning",
         );
+      const beforeNav = await getTabUrl(tabId);
       await chrome.tabs.update(tabId, { url: bing, active: true });
-      await wait(tabId);
+      await wait(tabId, interruptible, { awayFrom: beforeNav });
       if (mobilePhase && !(await ensureEmulation(tabId))) {
         continue;
       }
       await click(interruptible);
-      await delay(mediumDelay, interruptible);
-      if (await checkRewardsApiSession()) return true;
+      // The sign-in click hands the tab to login.live.com and back. That chain
+      // routinely outlasts a single mediumDelay, and the next attempt's
+      // tabs.update used to CANCEL it mid-redirect — so all three attempts
+      // failed and the entire mobile phase (all of the day's mobile points) was
+      // dropped. Let the chain land on Bing again, then poll the API instead of
+      // sampling it once.
+      await waitForUrl(
+        tabId,
+        (url) => isBingPageUrl(url),
+        longestDelay * 2,
+        interruptible,
+      );
+      for (let probe = 0; probe < 4; probe++) {
+        if (await checkRewardsApiSession()) return true;
+        if (interruptible && !config?.runtime?.running) return false;
+        await delay(mediumDelay, interruptible);
+      }
     }
     return false;
   };
@@ -2843,8 +2935,9 @@ async function search(searches, min, max, interruptible = true) {
     // account-menu click flow merely because the Rewards API is delayed or the
     // counter is lagging. Slow down, stay on Bing, and keep searching.
     if (ignoreDailyQuota) {
+      const beforeNav = await getTabUrl(tabId);
       await chrome.tabs.update(tabId, { url: bing, active: true });
-      await wait(tabId);
+      await wait(tabId, interruptible, { awayFrom: beforeNav });
       if (mobilePhase) {
         await ensureEmulation(tabId);
       }
@@ -2864,8 +2957,9 @@ async function search(searches, min, max, interruptible = true) {
       // were silently dropped (searches would run with a desktop UA otherwise).
       await ensureEmulation(tabId);
     }
+    const beforeNav = await getTabUrl(tabId);
     await chrome.tabs.update(tabId, { url: bing, active: true });
-    await wait(tabId);
+    await wait(tabId, interruptible, { awayFrom: beforeNav });
     await delay(shortestDelay, interruptible);
     checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
     return true;
@@ -2941,8 +3035,8 @@ async function search(searches, min, max, interruptible = true) {
       if (!recovered && !ignoreDailyQuota) {
         earlyStopReason = "session_unavailable";
       } else if (!recovered) {
-        // Forced run already skipped login-click recovery; keep searching a
-        // bit longer until the plateau threshold below decides to stop.
+        // Forced run already skipped login-click recovery; keep searching and
+        // re-read the counter at the next checkpoint.
         logs &&
           log(
             "[SEARCH] Forced manual run: login recovery skipped/failed; will reassess at next checkpoint.",
@@ -2950,15 +3044,18 @@ async function search(searches, min, max, interruptible = true) {
           );
       }
     } else if (progressed <= 0) {
-      // Recovery has already been tried the allowed number of times and the
-      // counter still has not moved. Searching harder is the wrong response:
-      // the account is not being credited, and continuing only adds volume to
-      // a session Bing is already ignoring. Stop and leave the rest for a
-      // fresh re-run (manual force or schedule) after the session settles.
-      earlyStopReason = "plateau";
+      // Recovery has been tried the allowed number of times and the counter
+      // still has not moved. This is ambiguous: either Bing has stopped
+      // crediting, or it is simply publishing the counter in a slow batch. The
+      // extension cannot tell the two apart, and stopping used to drop every
+      // remaining search of the plan — so finish the plan instead and let the
+      // counter catch up. `quotaFull` above still stops the phase, because a
+      // full counter is the one case where further searches provably earn
+      // nothing.
+      checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
       logs &&
         log(
-          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} consecutive recovery attempts; stopping instead of searching further.`,
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} recovery attempts; slowing down but finishing the requested plan (counter may still be lagging).`,
           "warning",
         );
     } else {
@@ -3051,11 +3148,6 @@ async function search(searches, min, max, interruptible = true) {
       shouldContinueSearch({
         attemptedIterations,
         requestedSearches: searches,
-        successfulSearches,
-        iterationLimit,
-        creditGoal,
-        snapshot: latestRewardsSnapshot,
-        counterField,
       })
     ) {
       const i = attemptedIterations;
@@ -3114,9 +3206,15 @@ async function search(searches, min, max, interruptible = true) {
       // global" — without it a retry would re-run the previous search verbatim,
       // earning nothing while still counting as a success.
       const previousQuery = searchQuery;
+      // Retry policy: re-type THIS iteration's query only while the submit never
+      // reached a results page. Once it has, Bing has most likely already
+      // credited that query, and re-sending it seconds later earns nothing
+      // because Bing ignores duplicates — so the retry draws a fresh query and
+      // can actually score.
+      let reuseOnRetry = true;
       for (let attempt = 1; attempt <= searchAttempts; attempt++) {
         queried = await query(interruptible, {
-          reuse: attempt > 1 && searchQuery !== previousQuery,
+          reuse: attempt > 1 && reuseOnRetry && searchQuery !== previousQuery,
         });
         if (!config?.runtime?.running) break;
         if (!queried) {
@@ -3147,10 +3245,19 @@ async function search(searches, min, max, interruptible = true) {
               `[SEARCH] Submit attempt ${attempt}/${searchAttempts} did not reach a results page; retrying.`,
               "warning",
             );
+          const landedUrl = await getTabUrl(tabId);
+          if (isConfirmedBingSearchUrl(landedUrl)) {
+            reuseOnRetry = false;
+            logs &&
+              log(
+                `[SEARCH] Submit reached a results page but could not be confirmed; retrying with a fresh query instead of an uncredited duplicate.`,
+                "warning",
+              );
+          }
           // Return to a clean Bing homepage so the next attempt types into a
           // fresh input rather than whatever half-loaded state we are in.
           await chrome.tabs.update(tabId, { url: bing, active: true });
-          await wait(tabId);
+          await wait(tabId, interruptible, { awayFrom: landedUrl });
           await delay(
             randomBetween(searchRetryDelayMin, searchRetryDelayMax),
             interruptible,
@@ -3175,11 +3282,12 @@ async function search(searches, min, max, interruptible = true) {
         continue;
       }
       if (!searched) {
+        const beforeReset = await getTabUrl(tabId);
         await chrome.tabs.update(tabId, {
           url: bing,
           active: true,
         });
-        await wait(tabId);
+        await wait(tabId, interruptible, { awayFrom: beforeReset });
         config.runtime.failed++;
         logs &&
           log(
@@ -3248,8 +3356,10 @@ async function search(searches, min, max, interruptible = true) {
     return false;
   }
   // Stopping because the daily counter is full is the *goal*, not a shortfall —
-  // the remaining planned searches would have earned nothing. A plateau stop is
-  // reported as incomplete so the run is retried later.
+  // the remaining planned searches would have earned nothing. A frozen counter
+  // no longer stops the phase at all (it is indistinguishable from a lagging
+  // API, and stopping dropped the rest of the plan), so the only early stop left
+  // is an unusable Rewards session.
   if (earlyStopReason === "quota_full") {
     logs &&
       log(
@@ -3258,17 +3368,10 @@ async function search(searches, min, max, interruptible = true) {
       );
     return true;
   }
-  if (
-    earlyStopReason === "plateau" ||
-    earlyStopReason === "session_unavailable"
-  ) {
+  if (earlyStopReason === "session_unavailable") {
     logs &&
       log(
-        `[SEARCH] Phase stopped early at ${successfulSearches}/${searches} searches: ${
-          earlyStopReason === "session_unavailable"
-            ? "the Rewards session was unavailable"
-            : "points were no longer being credited"
-        }.`,
+        `[SEARCH] Phase stopped early at ${successfulSearches}/${searches} searches: the Rewards session was unavailable.`,
         "warning",
       );
     return false;
@@ -3626,12 +3729,21 @@ async function refreshActivityPressPoint(
 // click misses" failure). Returns true once the heading exists, false on
 // timeout — callers still proceed, the pass scripts have their own retry.
 async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
+  // The section shell (its <h2> included) streams in well before the cards do:
+  // the card grid renders as Suspense skeletons carrying `animate-pulse`.
+  // Matching the heading alone therefore reports "ready" against an empty
+  // section, which is exactly the first-pass click miss this wait exists to
+  // prevent. Require the heading's section to be past its skeleton state too.
   const probe = `(() => {
     try {
       const re = new RegExp(${JSON.stringify(patternSource)}, "i");
       const nodes = document.querySelectorAll('h1, h2, h3, h4, [role="heading"]');
       for (const el of nodes) {
-        if (re.test(el.textContent || "")) return true;
+        if (!re.test(el.textContent || "")) continue;
+        const section = el.closest("section");
+        if (!section) return true;
+        if (section.querySelector('[class*="animate-pulse"]')) continue;
+        return true;
       }
       return false;
     } catch (e) { return false; }
@@ -3710,8 +3822,21 @@ async function runDashboardActivityPass(
       value.openedKeys?.[0],
       "DAILY SET",
     );
-    const pressed = await dispatchTrustedPress(tabId, freshPoint, "DAILY SET");
-    if (!pressed) clickedItems = [];
+    if (!freshPoint) {
+      logs &&
+        log(
+          `[ACTIVITY] Pass ${pass} daily-set target became stale before click.`,
+          "warning",
+        );
+      clickedItems = [];
+    } else {
+      const pressed = await dispatchTrustedPress(
+        tabId,
+        freshPoint,
+        "DAILY SET",
+      );
+      if (!pressed) clickedItems = [];
+    }
   }
   if (value.reason) {
     logs &&
@@ -3878,12 +4003,21 @@ async function runEarnActivityPass(
       value.openedKeys?.[0],
       "KEEP EARNING",
     );
-    const pressed = await dispatchTrustedPress(
-      tabId,
-      freshPoint,
-      "KEEP EARNING",
-    );
-    if (!pressed) clickedItems = [];
+    if (!freshPoint) {
+      logs &&
+        log(
+          `[ACTIVITY] Pass ${pass} Keep-earning target became stale before click.`,
+          "warning",
+        );
+      clickedItems = [];
+    } else {
+      const pressed = await dispatchTrustedPress(
+        tabId,
+        freshPoint,
+        "KEEP EARNING",
+      );
+      if (!pressed) clickedItems = [];
+    }
   }
   if (value.reason) {
     logs && log(`[ACTIVITY] Earn pass ${pass}: ${value.reason}.`, "warning");
@@ -4726,16 +4860,11 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
 });
 
 chrome.runtime.onInstalled.addListener(async () => {
-  chrome.storage.local.set({ mobile_points_enabled: true });
   await configReady;
   await bootstrapConfig();
 });
 chrome.runtime.onStartup.addListener(async () => {
   try {
-    const mobilePref = await chromeStorageGet("mobile_points_enabled");
-    if (!mobilePref?.mobile_points_enabled) {
-      await chromeStorageSet({ mobile_points_enabled: true });
-    }
     const stored = await get();
     await applyStoredConfig(stored, "startup");
     log(`[STARTUP] - Extension started.`, "success");

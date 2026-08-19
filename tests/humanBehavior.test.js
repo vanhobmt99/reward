@@ -5,7 +5,6 @@ const {
   planTypingSteps,
   applyTypingSteps,
   createNicheSession,
-  planScrollSteps,
   humanReadDelayMs,
   planLongPauseIndices,
   longPauseMs,
@@ -171,40 +170,6 @@ describe("createNicheSession", () => {
     session.next();
     expect(session.niche).not.toBeNull();
     expect(session.remaining).toBe(3);
-  });
-});
-
-describe("planScrollSteps", () => {
-  test("produces at least two steps with dwell pauses", () => {
-    const steps = planScrollSteps({ rng: seqRng([0.5]) });
-    expect(steps.length).toBeGreaterThanOrEqual(2);
-    for (const step of steps) {
-      expect(step.pauseMs).toBeGreaterThan(0);
-      expect(Number.isFinite(step.deltaY)).toBe(true);
-    }
-  });
-
-  test("the first step always scrolls down", () => {
-    // rng 0 would otherwise take the scroll-back-up branch
-    const steps = planScrollSteps({ rng: seqRng([0]) });
-    expect(steps[0].deltaY).toBeGreaterThan(0);
-  });
-
-  test("can scroll back up on later steps", () => {
-    // Draw order is: count, then per step [backUp (i>0 only), magnitude,
-    // pause]. Index 3 is the first backUp roll — put it under the 0.2 threshold.
-    const steps = planScrollSteps({
-      rng: seqRng([0.5, 0.5, 0.5, 0.05, 0.5, 0.5]),
-    });
-    expect(steps.some((step) => step.deltaY < 0)).toBe(true);
-  });
-
-  test("mobile flings travel further than desktop wheel notches", () => {
-    const desktop = planScrollSteps({ rng: seqRng([0.9]), mobile: false });
-    const mobile = planScrollSteps({ rng: seqRng([0.9]), mobile: true });
-    expect(Math.abs(mobile[0].deltaY)).toBeGreaterThan(
-      Math.abs(desktop[0].deltaY),
-    );
   });
 });
 

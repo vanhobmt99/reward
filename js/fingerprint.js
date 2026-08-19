@@ -1,10 +1,11 @@
 // Anti-fingerprinting — injected into the page's MAIN world at document_start.
 //
-// NOTE: this file is registered in manifest.json as a separate content script
-// with "world": "MAIN". A normal content script runs in an isolated world and
-// patching prototypes there does NOT affect what the page sees, so the v1
-// version of this code was effectively a no-op. Running in the MAIN world is
-// what makes these overrides actually visible to Bing's detection scripts.
+// NOTE: this file is NOT a manifest content script. The service worker fetches
+// its source and installs it through CDP
+// (Page.addScriptToEvaluateOnNewDocument — see installFingerprintPatch in
+// service.js), which is what puts it in the page's MAIN world. A normal content
+// script runs in an isolated world, where patching prototypes does NOT affect
+// what the page sees — that is why the v1 version of this code was a no-op.
 //
 // It is also UA-aware: when the tab is emulating a mobile device we must NOT
 // leak desktop-only traits (Intel GPU, 5 plugins). Doing so is more suspicious

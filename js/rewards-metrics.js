@@ -28,11 +28,30 @@ export function findFirstNumberByKey(source, names) {
   return null;
 }
 
-function readCounterField(item, key) {
-  if (item == null) return 0;
+// Bing has shipped several names for the same two numbers, and an entry that
+// carries only the newer ones used to read as a flat 0/0. That silently disabled
+// quota detection (`max` 0 means "no goal") and pinned `progress` at 0, which the
+// search loop then interprets as "Bing has stopped crediting" and abandons the
+// rest of the plan. Try the aliases before giving up.
+const COUNTER_FIELD_ALIASES = {
+  progress: ["progress", "pointProgress", "currentProgress", "current"],
+  max: ["max", "pointProgressMax", "maxProgress", "total"],
+};
+
+// Returns null when the field is genuinely absent, so callers can tell "this
+// counter reports zero" apart from "this counter has no such field".
+function readCounterFieldRaw(item, key) {
+  if (item == null) return null;
   const attr = item.attributes || item;
-  const value = Number(attr[key] ?? item[key] ?? 0);
-  return Number.isFinite(value) ? value : 0;
+  for (const name of COUNTER_FIELD_ALIASES[key] || [key]) {
+    const value = Number(attr?.[name] ?? item[name]);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function readCounterField(item, key) {
+  return readCounterFieldRaw(item, key) ?? 0;
 }
 
 /**
@@ -55,7 +74,16 @@ export function pickActiveCounter(arr) {
     (item) =>
       readCounterField(item, "max") > readCounterField(item, "progress"),
   );
-  return active || items[items.length - 1];
+  if (active) return active;
+  // Nothing has room left. Prefer the last entry that actually reports a max:
+  // an entry with no readable max describes nothing, and returning it would
+  // leave `pcMax`/`mobMax` at 0 — which disables quota detection and pins
+  // `progress` at 0 for the rest of the phase.
+  const described = items.filter(
+    (item) => readCounterFieldRaw(item, "max") !== null,
+  );
+  const pool = described.length > 0 ? described : items;
+  return pool[pool.length - 1];
 }
 
 export function getCounterValue(arr, key) {

@@ -11,15 +11,21 @@
 /**
  * DOM helpers shared byte-for-byte by the Dashboard and Keep-earning scripts.
  * Emitted once at the top of each IIFE (before any script-specific code) so a
- * fix to normalize/textOf/isVisible/card-targeting/click bookkeeping lives in a
- * single place. `nearestCard` and `clickLikeUser` are intentionally NOT here:
- * they differ between the two passes (card keyword / max text, and the
- * dashboard's deferToCdp press-point branch), so each script defines its own.
- * These are all side-effect-free declarations invoked only later in the loop,
- * so `nearestCard`/`clickLikeUser`/`visited`/`seen`/`clicked`/`safetyLimit`
- * (referenced by name) just need to exist by call time, which they do.
+ * fix to normalize/textOf/isVisible/card-targeting/clicking/click bookkeeping
+ * lives in a single place.
+ *
+ * `clickLikeUser` used to be duplicated in both scripts; the two copies had
+ * drifted only in comment wording, so a fix to one silently missed the other.
+ * `nearestCard` differed in exactly two values, which are now parameters:
+ * `cardKeyword` joins the class/testid "looks like a card" probe, and
+ * `maxCardTextLength` caps how much text a card may hold.
+ *
+ * These are all side-effect-free declarations invoked only later in the loop, so
+ * the names they reference (`visited`/`seen`/`clicked`/`openedKeys`/
+ * `safetyLimit`/`deferToCdp`/`pressPoint`) only need to exist by call time —
+ * every caller declares them above this block.
  */
-function activityDomHelpers() {
+function activityDomHelpers(cardKeyword, maxCardTextLength) {
   return `
 			const normalize = (value) => (value || '').normalize('NFC').replace(/\\s+/g, ' ').trim();
 			const mainRoot = document.querySelector('main') || document.body;
@@ -75,6 +81,131 @@ function activityDomHelpers() {
 					})
 					.sort((a, b) => b.score - a.score);
 				return scored[0]?.target || card;
+			};
+			// The Rewards UI renders a card's reward as a bare number in a pill
+			// badge ("10", "+5") with no "points"/"pts" word next to it, so the
+			// text patterns below never see it and every card reads as worthless.
+			// Read the badge out of the DOM instead; null means "no badge here"
+			// so callers can still fall back to the text patterns.
+			const pointsBadgeValue = (card) => {
+				if (!card?.querySelectorAll) return null;
+				const pills = card.querySelectorAll(
+					'[class*="rewardsbg" i], [class*="cornercircular" i], [class*="badge" i], [class*="pill" i]'
+				);
+				for (const pill of pills) {
+					const match = normalize(pill.textContent || '').match(/^\\+?\\s*(\\d{1,5})$/);
+					if (match) return Number(match[1]);
+				}
+				return null;
+			};
+			const nearestCard = (node) => {
+				const candidates = [];
+				let current = node;
+				for (let i = 0; current && current !== document.body && i < 8; i++) {
+					if (isVisible(current)) {
+						const rect = current.getBoundingClientRect();
+						const text = textOf(current);
+						const className = String(current.className || '');
+						const testId = String(current.getAttribute?.('data-testid') || '');
+						const looksLikeCard = /card|tile|offer|activity|${cardKeyword}|mee|ctrl|pointer|group/i.test(className + ' ' + testId);
+						const hasCardSize = rect.width >= 120 && rect.height >= 48;
+						const maxCardWidth = Math.max(360, Math.min(window.innerWidth * 0.88, 760));
+						const maxCardHeight = Math.max(180, window.innerHeight * 0.5);
+						const tagName = String(current.tagName || '').toLowerCase();
+						const broadContainer = /^(main|section|footer|header|nav)$/i.test(tagName) ||
+							(rect.width > maxCardWidth && rect.height > 220);
+						if (hasCardSize && !broadContainer && rect.width <= maxCardWidth && rect.height <= maxCardHeight && text.length >= 8 && text.length <= ${maxCardTextLength} && (looksLikeCard || current.querySelector?.(interactiveSelector))) {
+							candidates.push(current);
+						}
+					}
+					current = current.parentElement;
+				}
+				candidates.sort((a, b) => {
+					const ar = a.getBoundingClientRect();
+					const br = b.getBoundingClientRect();
+					return (ar.width * ar.height) - (br.width * br.height);
+				});
+				return candidates[0] ||
+					node.closest?.('article, li, [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"], [class*="group/ctrl"], [class*="cursor-pointer"]') ||
+					node;
+			};
+			const clickLikeUser = (target) => {
+				const rect = target.getBoundingClientRect();
+				const visibleLeft = Math.max(rect.left, 1);
+				const visibleRight = Math.min(rect.right, window.innerWidth - 2);
+				const visibleTop = Math.max(rect.top, 1);
+				const visibleBottom = Math.min(rect.bottom, window.innerHeight - 2);
+				// Fully offscreen: elementFromPoint is useless there, but synthetic
+				// events + target.click() still work, so probe nothing and fall through.
+				const onscreen = visibleRight > visibleLeft && visibleBottom > visibleTop;
+				const centerX = onscreen ? (visibleLeft + visibleRight) / 2 : (rect.left + rect.right) / 2;
+				const centerY = onscreen ? (visibleTop + visibleBottom) / 2 : (rect.top + rect.bottom) / 2;
+				const points = onscreen ? [
+					[centerX, centerY],
+					[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
+					[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
+					[centerX, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],
+					[centerX, visibleBottom - Math.min(12, (visibleBottom - visibleTop) / 2)]
+				] : [];
+				const hit = points
+					.map(([x, y]) => ({ x, y, element: document.elementFromPoint(x, y) }))
+					.find((point) => point.element && (target.contains(point.element) || target === point.element || point.element.contains(target)));
+				// No hit means an overlay/toast covers every probe point, or the layout
+				// shifted after measuring. Instead of dropping the card (a silent click
+				// miss), fall back to dispatching directly on the target: synthetic
+				// events + target.click() work regardless of what elementFromPoint sees.
+				const x = hit ? hit.x : centerX;
+				const y = hit ? hit.y : centerY;
+				const eventTarget = hit ? hit.element : target;
+				if (deferToCdp) {
+					if (hit) {
+						pressPoint = { x, y };
+						return true;
+					}
+					// Covered/stale coordinates must fail closed. A synthetic click is
+					// ignored by React Aria often enough to poison click bookkeeping, and
+					// a trusted press here would hit the overlay instead. Leaving the card
+					// unvisited lets popup dismissal / a later pass retry it.
+					pressPoint = null;
+					return false;
+				}
+				try {
+					target.focus?.({ preventScroll: true });
+				} catch (error) {}
+				for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
+					try {
+						const EventCtor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
+						eventTarget.dispatchEvent(new EventCtor(type, {
+							bubbles: true,
+							cancelable: true,
+							view: window,
+							clientX: x,
+							clientY: y,
+							screenX: window.screenX + x,
+							screenY: window.screenY + y,
+							button: 0,
+							buttons: type.endsWith('down') ? 1 : 0,
+							pointerId: 1,
+							pointerType: 'mouse',
+							isPrimary: true
+						}));
+					} catch (error) {}
+				}
+				if (typeof target.click === 'function') {
+					target.click();
+				} else {
+					eventTarget.dispatchEvent(new MouseEvent('click', {
+						bubbles: true,
+						cancelable: true,
+						view: window,
+						clientX: x,
+						clientY: y,
+						screenX: window.screenX + x,
+						screenY: window.screenY + y,
+						button: 0
+					}));
+				}
+				return true;
 			};
 			const keyFor = (target, type, text) => {
 				const href = target.href || target.closest?.('a[href]')?.href || '';
@@ -138,7 +269,7 @@ export function createDashboardActivityScript(
 			const seen = new Set();
 			const deferToCdp = ${Boolean(deferToCdp)};
 			const safetyLimit = ${Number(safetyLimit) || 12};
-${activityDomHelpers()}
+${activityDomHelpers("daily", 520)}
 			const dailySetPattern = /daily set|daily check.?in|today'?s? set|bộ hàng ngày|chuỗi hàng ngày|nhiệm vụ hàng ngày|phần thưởng hàng ngày/i;
 			const nextSectionPattern = /your activity|more activities|punch cards?|recommended|quests?|activities|keep earning|hoạt động khác|kiếm thêm/i;
 			const isDone = (el) => {
@@ -196,8 +327,7 @@ ${activityDomHelpers()}
 						openedKeys,
 						retry: true,
 						reason: 'scrolled while looking for Daily set',
-						url: location.href,
-						title: document.title
+						url: location.href
 					};
 				}
 				return {
@@ -205,8 +335,7 @@ ${activityDomHelpers()}
 					skipped,
 					openedKeys,
 					reason: 'daily set heading not found',
-					url: location.href,
-					title: document.title
+					url: location.href
 				};
 			}
 			// Section boundaries must be real headings. Generic div/span text often
@@ -223,114 +352,6 @@ ${activityDomHelpers()}
 			const isInsideDailySet = (el) => {
 				const rect = el.getBoundingClientRect();
 				return rect.bottom >= dailyTop && rect.top < dailyBottom;
-			};
-			const nearestCard = (node) => {
-				const candidates = [];
-				let current = node;
-				for (let i = 0; current && current !== document.body && i < 8; i++) {
-					if (isVisible(current)) {
-						const rect = current.getBoundingClientRect();
-						const text = textOf(current);
-						const className = String(current.className || '');
-						const testId = String(current.getAttribute?.('data-testid') || '');
-						const looksLikeCard = /card|tile|offer|activity|daily|mee|ctrl|pointer|group/i.test(className + ' ' + testId);
-						const hasCardSize = rect.width >= 120 && rect.height >= 48;
-						const maxCardWidth = Math.max(360, Math.min(window.innerWidth * 0.88, 760));
-						const maxCardHeight = Math.max(180, window.innerHeight * 0.5);
-						const tagName = String(current.tagName || '').toLowerCase();
-						const broadContainer = /^(main|section|footer|header|nav)$/i.test(tagName) ||
-							(rect.width > maxCardWidth && rect.height > 220);
-						if (hasCardSize && !broadContainer && rect.width <= maxCardWidth && rect.height <= maxCardHeight && text.length >= 8 && text.length <= 520 && (looksLikeCard || current.querySelector?.(interactiveSelector))) {
-							candidates.push(current);
-						}
-					}
-					current = current.parentElement;
-				}
-				candidates.sort((a, b) => {
-					const ar = a.getBoundingClientRect();
-					const br = b.getBoundingClientRect();
-					return (ar.width * ar.height) - (br.width * br.height);
-				});
-				return candidates[0] ||
-					node.closest?.('article, li, [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"], [class*="group/ctrl"], [class*="cursor-pointer"]') ||
-					node;
-			};
-			const clickLikeUser = (target) => {
-				const rect = target.getBoundingClientRect();
-				const visibleLeft = Math.max(rect.left, 1);
-				const visibleRight = Math.min(rect.right, window.innerWidth - 2);
-				const visibleTop = Math.max(rect.top, 1);
-				const visibleBottom = Math.min(rect.bottom, window.innerHeight - 2);
-				// Fully offscreen: elementFromPoint is useless there, but synthetic
-				// events + target.click() still work, so probe nothing and fall through.
-				const onscreen = visibleRight > visibleLeft && visibleBottom > visibleTop;
-				const centerX = onscreen ? (visibleLeft + visibleRight) / 2 : (rect.left + rect.right) / 2;
-				const centerY = onscreen ? (visibleTop + visibleBottom) / 2 : (rect.top + rect.bottom) / 2;
-				const points = onscreen ? [
-					[centerX, centerY],
-					[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
-					[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
-					[centerX, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],
-					[centerX, visibleBottom - Math.min(12, (visibleBottom - visibleTop) / 2)]
-				] : [];
-				const hit = points
-					.map(([x, y]) => ({ x, y, element: document.elementFromPoint(x, y) }))
-					.find((point) => point.element && (target.contains(point.element) || target === point.element || point.element.contains(target)));
-				// No hit means an overlay/toast covers every probe point, or the layout
-				// shifted after measuring. Instead of dropping the card (a silent click
-				// miss), fall back to dispatching directly on the target: synthetic
-				// events + target.click() work regardless of what elementFromPoint sees.
-				const x = hit ? hit.x : centerX;
-				const y = hit ? hit.y : centerY;
-				const eventTarget = hit ? hit.element : target;
-				if (deferToCdp) {
-					if (hit) {
-						pressPoint = { x, y };
-						return true;
-					}
-					// Covered/stale coordinates must fail closed. A synthetic click is
-					// ignored by React Aria often enough to poison click bookkeeping,
-					// and a trusted press here would hit the overlay instead.
-					pressPoint = null;
-					return false;
-				}
-				try {
-					target.focus?.({ preventScroll: true });
-				} catch (error) {}
-				for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
-					try {
-						const EventCtor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-						eventTarget.dispatchEvent(new EventCtor(type, {
-							bubbles: true,
-							cancelable: true,
-							view: window,
-							clientX: x,
-							clientY: y,
-							screenX: window.screenX + x,
-							screenY: window.screenY + y,
-							button: 0,
-							buttons: type.endsWith('down') ? 1 : 0,
-							pointerId: 1,
-							pointerType: 'mouse',
-							isPrimary: true
-						}));
-					} catch (error) {}
-				}
-				if (typeof target.click === 'function') {
-					target.click();
-				} else {
-					eventTarget.dispatchEvent(new MouseEvent('click', {
-						bubbles: true,
-						cancelable: true,
-						view: window,
-						clientX: x,
-						clientY: y,
-						screenX: window.screenX + x,
-						screenY: window.screenY + y,
-						button: 0
-					}));
-				}
-				return true;
 			};
 			const pointPattern = /\\+\\s*\\d+|\\d+\\s*(points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
@@ -359,9 +380,10 @@ ${activityDomHelpers()}
 				const anchor = target.matches?.('a[href]') ? target : target.closest?.('a[href]');
 				const href = String(target.href || anchor?.href || '').toLowerCase();
 				const type = 'daily-set';
+				const hasPoints = pointPattern.test(text) || (pointsBadgeValue(card) || 0) > 0;
 
 				if (isDone(card) || isDone(target) || (anchor && isDone(anchor))) {
-					if (pointPattern.test(text) || activityHrefPattern.test(href)) {
+					if (hasPoints || activityHrefPattern.test(href)) {
 						skipped.push({ type, text: text.slice(0, 90), reason: 'already done' });
 					}
 					continue;
@@ -369,21 +391,50 @@ ${activityDomHelpers()}
 				if (skipPattern.test(text)) {
 					// Record point-bearing cards we drop so the diagnostic log shows
 					// WHY (e.g. the first daily-set card getting skipped).
-					if (pointPattern.test(text)) skipped.push({ type, text: text.slice(0, 90), reason: 'matched skip pattern' });
+					if (hasPoints) skipped.push({ type, text: text.slice(0, 90), reason: 'matched skip pattern' });
 					continue;
 				}
 
 				const score =
-					(pointPattern.test(text) ? 4 : 0) +
+					(hasPoints ? 4 : 0) +
 					(activityHrefPattern.test(href) ? 4 : 0) +
 					(activityTextPattern.test(text) ? 2 : 0) +
 					2;
 				if (score < 3) {
-					if (pointPattern.test(text)) skipped.push({ type, text: text.slice(0, 90), reason: 'low score (' + score + ')' });
+					if (hasPoints) skipped.push({ type, text: text.slice(0, 90), reason: 'low score (' + score + ')' });
 					continue;
 				}
 
 				openTarget(target, type, text);
+			}
+
+			// The heading scrolls into view at the BOTTOM edge of the viewport, so
+			// the cards under it are still off-screen and isVisible() rejects every
+			// one of them. Without this the pass reports zero and never scrolls
+			// again — the Daily set silently never gets clicked. Bounded by
+			// dailyBottom so we stop once the whole section has been seen.
+			if (clicked.length === 0 && dailyBottom > window.innerHeight - 4) {
+				const doc = document.documentElement;
+				const maxScroll = Math.max(
+					doc.scrollHeight || 0,
+					document.body?.scrollHeight || 0
+				);
+				if (window.scrollY + window.innerHeight < maxScroll - 20) {
+					window.scrollBy({
+						top: Math.max(320, Math.floor(window.innerHeight * 0.6)),
+						left: 0,
+						behavior: 'instant'
+					});
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled for more Daily set cards',
+						url: location.href
+					};
+				}
 			}
 
 			return {
@@ -391,9 +442,7 @@ ${activityDomHelpers()}
 				skipped,
 				openedKeys,
 				pressPoint,
-				safetyLimit,
-				url: location.href,
-				title: document.title
+				url: location.href
 			};
 		})()
 	`;
@@ -414,7 +463,7 @@ export function createEarnActivityScript(
 			const seen = new Set();
 			const deferToCdp = ${Boolean(deferToCdp)};
 			const safetyLimit = ${Number(safetyLimit) || 12};
-${activityDomHelpers()}
+${activityDomHelpers("earn", 560)}
 			const skipReasonFor = (el) => {
 				const txt = textOf(el).toLowerCase();
 				if (/silver level required|gold level required|level required|required|not eligible|locked|yêu cầu cấp|yêu cầu trình độ|bị khóa/i.test(txt)) {
@@ -475,8 +524,7 @@ ${activityDomHelpers()}
 					reason: canScroll ?
 						'scrolled while looking for Keep earning' :
 						'keep earning heading not found',
-					url: location.href,
-					title: document.title
+					url: location.href
 				};
 			}
 			const nextHeading = markerNodes.find((item) =>
@@ -489,112 +537,6 @@ ${activityDomHelpers()}
 			const isInsideEarnArea = (el) => {
 				const rect = el.getBoundingClientRect();
 				return rect.bottom >= keepTop && rect.top < earnBottom;
-			};
-			const nearestCard = (node) => {
-				const candidates = [];
-				let current = node;
-				for (let i = 0; current && current !== document.body && i < 8; i++) {
-					if (isVisible(current)) {
-						const rect = current.getBoundingClientRect();
-						const text = textOf(current);
-						const className = String(current.className || '');
-						const testId = String(current.getAttribute?.('data-testid') || '');
-						const looksLikeCard = /card|tile|offer|activity|earn|mee|ctrl|pointer|group/i.test(className + ' ' + testId);
-						const hasCardSize = rect.width >= 120 && rect.height >= 48;
-						const maxCardWidth = Math.max(360, Math.min(window.innerWidth * 0.88, 760));
-						const maxCardHeight = Math.max(180, window.innerHeight * 0.5);
-						const tagName = String(current.tagName || '').toLowerCase();
-						const broadContainer = /^(main|section|footer|header|nav)$/i.test(tagName) ||
-							(rect.width > maxCardWidth && rect.height > 220);
-						if (hasCardSize && !broadContainer && rect.width <= maxCardWidth && rect.height <= maxCardHeight && text.length >= 8 && text.length <= 560 && (looksLikeCard || current.querySelector?.(interactiveSelector))) {
-							candidates.push(current);
-						}
-					}
-					current = current.parentElement;
-				}
-				candidates.sort((a, b) => {
-					const ar = a.getBoundingClientRect();
-					const br = b.getBoundingClientRect();
-					return (ar.width * ar.height) - (br.width * br.height);
-				});
-				return candidates[0] ||
-					node.closest?.('article, li, [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"], [class*="group/ctrl"], [class*="cursor-pointer"]') ||
-					node;
-			};
-			const clickLikeUser = (target) => {
-				const rect = target.getBoundingClientRect();
-				const visibleLeft = Math.max(rect.left, 1);
-				const visibleRight = Math.min(rect.right, window.innerWidth - 2);
-				const visibleTop = Math.max(rect.top, 1);
-				const visibleBottom = Math.min(rect.bottom, window.innerHeight - 2);
-				// Fully offscreen: elementFromPoint is useless there, but synthetic
-				// events + target.click() still work, so probe nothing and fall through.
-				const onscreen = visibleRight > visibleLeft && visibleBottom > visibleTop;
-				const centerX = onscreen ? (visibleLeft + visibleRight) / 2 : (rect.left + rect.right) / 2;
-				const centerY = onscreen ? (visibleTop + visibleBottom) / 2 : (rect.top + rect.bottom) / 2;
-				const points = onscreen ? [
-					[centerX, centerY],
-					[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
-					[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
-					[centerX, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],
-					[centerX, visibleBottom - Math.min(12, (visibleBottom - visibleTop) / 2)]
-				] : [];
-				const hit = points
-					.map(([x, y]) => ({ x, y, element: document.elementFromPoint(x, y) }))
-					.find((point) => point.element && (target.contains(point.element) || target === point.element || point.element.contains(target)));
-				// No hit: an overlay covers the probe points or layout shifted after
-				// measuring. Dispatch directly on the target instead of dropping the
-				// card — synthetic events don't need elementFromPoint to agree.
-				const x = hit ? hit.x : centerX;
-				const y = hit ? hit.y : centerY;
-				const eventTarget = hit ? hit.element : target;
-				if (deferToCdp) {
-					if (hit) {
-						pressPoint = { x, y };
-						return true;
-					}
-					// Do not report a synthetic fallback as a successful click. Leave
-					// the card unvisited so popup dismissal / a later pass can retry it.
-					pressPoint = null;
-					return false;
-				}
-				try {
-					target.focus?.({ preventScroll: true });
-				} catch (error) {}
-				for (const type of ['pointerover', 'mouseover', 'pointerdown', 'mousedown', 'pointerup', 'mouseup']) {
-					try {
-						const EventCtor = type.startsWith('pointer') && typeof PointerEvent === 'function' ? PointerEvent : MouseEvent;
-						eventTarget.dispatchEvent(new EventCtor(type, {
-							bubbles: true,
-							cancelable: true,
-							view: window,
-							clientX: x,
-							clientY: y,
-							screenX: window.screenX + x,
-							screenY: window.screenY + y,
-							button: 0,
-							buttons: type.endsWith('down') ? 1 : 0,
-							pointerId: 1,
-							pointerType: 'mouse',
-							isPrimary: true
-						}));
-					} catch (error) {}
-				}
-				if (typeof target.click === 'function') {
-					target.click();
-				} else {
-					eventTarget.dispatchEvent(new MouseEvent('click', {
-						bubbles: true,
-						cancelable: true,
-						view: window,
-						clientX: x,
-						clientY: y,
-						screenX: window.screenX + x,
-						screenY: window.screenY + y,
-						button: 0
-					}));
-				}
-				return true;
 			};
 			const nonCardPattern = /privacy|terms|dashboard only|no points|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback/i;
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
@@ -631,7 +573,15 @@ ${activityDomHelpers()}
 					skipped.push({ type, text: text.slice(0, 90), reason: 'not an earn-points card' });
 					continue;
 				}
-				if (!rewardPointsPattern.test(text) || zeroPointsPattern.test(text)) {
+				// Badge wins when the card has one: it is the authoritative reward
+				// value. Only cards with no badge at all fall back to reading the
+				// point value out of the flattened text.
+				const badgePoints = pointsBadgeValue(card);
+				const hasPoints =
+					badgePoints === null ?
+						(rewardPointsPattern.test(text) && !zeroPointsPattern.test(text)) :
+						badgePoints > 0;
+				if (!hasPoints) {
 					const fallbackScore =
 						(activityHrefPattern.test(href) ? 4 : 0) +
 						(activityTextPattern.test(text) ? 3 : 0) +
@@ -672,8 +622,7 @@ ${activityDomHelpers()}
 						pressPoint,
 						retry: true,
 						reason: 'scrolled for more earn cards',
-						url: location.href,
-						title: document.title
+						url: location.href
 					};
 				}
 				fallbackCandidates.sort((a, b) => b.score - a.score);
@@ -689,9 +638,7 @@ ${activityDomHelpers()}
 				skipped,
 				openedKeys,
 				pressPoint,
-				safetyLimit,
-				url: location.href,
-				title: document.title
+				url: location.href
 			};
 		})()
 	`;
@@ -810,7 +757,7 @@ export function createSolveActivityScript(deferToCdp = false) {
 					target.click();
 					return { clicked: true, text: text.slice(0, 80) || target.tagName, url: location.href };
 				}
-				return { clicked: false, title: document.title, url: location.href };
+				return { clicked: false, url: location.href };
 			})()
 `;
 }
@@ -863,8 +810,18 @@ export function createClaimReadyScript(deferToCdp = false) {
 					if (!isVisible(el)) continue;
 					const t = textOf(el);
 					if (t.length <= 500 && readyPattern.test(t) && !rejectPattern.test(t)) {
-						const numbers = (t.match(/\\b\\d+\\b/g) || []).map(Number).filter(Number.isFinite);
-						const n = numbers.length ? Math.max(...numbers) : null;
+						// "1,250" splits into [1, 250] under \\b\\d+\\b, so strip thousands
+						// separators first, then prefer the number that actually follows
+						// the ready-to-claim label over the largest number on the card
+						// (a wrapper can also carry the "Available points" balance).
+						const compact = t.replace(/(\\d)[,.\\u00a0\\u202f](?=\\d{3}(?!\\d))/g, '$1');
+						const labelled = compact.match(
+							/(?:ready to claim|to be claimed|claim your|unclaimed|pending points?|sẵn sàng nhận|chờ nhận|điểm chờ|chưa nhận)\\D{0,12}(\\d+)/i
+						);
+						const numbers = (compact.match(/\\b\\d+\\b/g) || []).map(Number).filter(Number.isFinite);
+						const n = labelled ?
+							Number(labelled[1]) :
+							(numbers.length ? Math.max(...numbers) : null);
 						// Explicit "0" on the ready card means nothing is pending:
 						// record it so the zero short-circuit below fires instead of
 						// falling through to hunt (and possibly mis-click) a confirm.
@@ -969,91 +926,6 @@ export function createClaimReadyScript(deferToCdp = false) {
 					text: targetText.slice(0, 80),
 					pressPoint,
 				};
-			})()
-`;
-}
-
-/**
- * Pick one organic result on a Bing SERP and return a viewport point to click.
- *
- * Returns `{ found:false }` when nothing safe is available — the caller then
- * simply skips the click for this search. Nothing is clicked page-side: the
- * script only *chooses* a target and reports its centre, so the actual press
- * goes through CDP as a trusted input event (a synthetic `el.click()` here
- * would be an untrusted event and, worse, could trigger a popup handler).
- *
- * Ads, "People also ask", videos, image tiles and Microsoft-owned destinations
- * are excluded: an ad click is billable to someone and a PAA expander is not a
- * page visit, so neither is the ordinary result visit this is imitating.
- */
-export function createResultPickScript() {
-  return `
-			(function() {
-				const normalize = (v) => (v || '').replace(/\\s+/g, ' ').trim();
-				const isVisible = (el) => {
-					if (!el) return false;
-					const rect = el.getBoundingClientRect();
-					const style = getComputedStyle(el);
-					return rect.width > 8 && rect.height > 8 &&
-						style.display !== 'none' &&
-						style.visibility !== 'hidden' &&
-						style.opacity !== '0' &&
-						el.getAttribute('aria-hidden') !== 'true';
-				};
-				// Organic results live in #b_results > li.b_algo. Ads are li.b_ad /
-				// .b_adTop, and answer/PAA blocks carry their own classes.
-				const rejectAncestor = 'li.b_ad, .b_ad, .b_adTop, .b_adBottom, .b_adSlug, [data-priority="ad"], .b_ans, .b_rich, .b_vidAns, .b_imgans, .b_footer, #b_header, .b_pag';
-				const container = document.querySelector('#b_results');
-				if (!container) return { found: false, reason: 'no-results-container' };
-
-				const candidates = [];
-				const items = Array.from(container.querySelectorAll('li.b_algo'));
-				for (const item of items) {
-					if (!isVisible(item) || item.closest(rejectAncestor)) continue;
-					const link = item.querySelector('h2 a[href]') || item.querySelector('a[href]');
-					if (!link || !isVisible(link)) continue;
-
-					const href = link.getAttribute('href') || '';
-					if (!/^https?:/i.test(href)) continue;
-					// Skip results that lead back into Microsoft properties: those are
-					// not the "left Bing to read something" signal being imitated, and
-					// a rewards/login page would disturb the session.
-					let destination = '';
-					try {
-						const parsed = new URL(href, location.href);
-						destination = parsed.hostname.toLowerCase();
-						// Bing wraps organic links in /ck/a?...&u=<base64>. The wrapper
-						// host is bing.com but the destination is not, so unwrap before
-						// judging it.
-						if (/(^|\\.)bing\\.com$/.test(destination) && /\\/ck\\/a/i.test(parsed.pathname)) {
-							destination = 'wrapped';
-						}
-					} catch (_) { continue; }
-					if (destination !== 'wrapped' &&
-						/(^|\\.)(bing|microsoft|live|msn|microsoftonline)\\.com$/.test(destination)) {
-						continue;
-					}
-
-					const rect = link.getBoundingClientRect();
-					// Only in-viewport targets: clicking coordinates that are scrolled
-					// off-screen lands on whatever happens to be there instead.
-					if (rect.top < 0 || rect.bottom > (window.innerHeight || 0)) continue;
-
-					candidates.push({
-						x: Math.round(rect.left + rect.width / 2),
-						y: Math.round(rect.top + rect.height / 2),
-						title: normalize(link.innerText || link.textContent || '').slice(0, 80),
-						newTab: (link.getAttribute('target') || '').toLowerCase() === '_blank',
-					});
-				}
-
-				if (candidates.length === 0) return { found: false, reason: 'no-candidates' };
-				// Favour the first few results: real click-through is heavily
-				// top-weighted, so a uniform pick over ten results would itself be an
-				// unusual distribution.
-				const pool = candidates.slice(0, 5);
-				const choice = pool[Math.floor(Math.random() * pool.length)];
-				return { found: true, ...choice, total: candidates.length };
 			})()
 `;
 }

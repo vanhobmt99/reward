@@ -170,9 +170,11 @@ describe("service regressions", () => {
     expect(serviceSource).toContain(
       "if (ignoreDailyQuota && !mobileLoginRequired)",
     );
-    // Stall recovery on a forced run must not open the account menu either.
+    // Stall recovery on a forced run must not open the account menu either: it
+    // only re-lands the tab on Bing (capturing the pre-navigation url so the
+    // wait cannot resolve against the document being replaced).
     expect(serviceSource).toMatch(
-      /if \(ignoreDailyQuota\) \{\s*await chrome\.tabs\.update\(tabId, \{ url: bing/,
+      /if \(ignoreDailyQuota\) \{\s*const beforeNav = await getTabUrl\(tabId\);\s*await chrome\.tabs\.update\(tabId, \{ url: bing/,
     );
     expect(serviceSource).toContain(
       "[POST_SEARCH] Forced run: skipping post-search login click.",
@@ -207,10 +209,15 @@ describe("service regressions", () => {
     // The force flag must be scoped to the run that set it.
     expect(serviceSource).toContain("ignoreDailyQuota = Boolean(force);");
     expect(serviceSource).toContain("ignoreDailyQuota = false;");
-    // Force still starts the full plan, but mid-run stops when the real
-    // counter is full or frozen — more uncredited volume does not help.
+    // A FULL counter still stops the phase: those searches provably earn
+    // nothing. A merely FROZEN counter must not, because it is indistinguishable
+    // from a Rewards API publishing in a slow batch, and stopping on it dropped
+    // every remaining search of the plan.
     expect(serviceSource).toContain('earlyStopReason = "quota_full"');
-    expect(serviceSource).toContain('earlyStopReason = "plateau"');
+    expect(serviceSource).not.toContain('earlyStopReason = "plateau"');
+    expect(serviceSource).toContain(
+      "slowing down but finishing the requested plan",
+    );
     expect(serviceSource).not.toContain(
       "continuing the requested search plan.",
     );
@@ -314,10 +321,58 @@ describe("service regressions", () => {
 
   test("wait helpers respect interruptible run stop checks", () => {
     expect(serviceSource).toContain(
-      "async function wait(tabId, interruptible = true)",
+      "async function wait(tabId, interruptible = true, { awayFrom = null } = {})",
     );
     expect(serviceSource).toContain("async function waitForUrl(");
     expect(serviceSource).toContain("interruptible = true");
+  });
+
+  test("wait() cannot resolve against the document being navigated away from", () => {
+    // chrome.tabs.update() resolves before the navigation commits, so a bare
+    // tabs.get right after it still reports the OLD page as complete. Every
+    // navigate-then-interact site in the search path must gate on `awayFrom`,
+    // or the query gets typed into a document that is about to be discarded.
+    expect(serviceSource).toContain(
+      "const isStale = (url) => Boolean(awayFrom) && url === awayFrom;",
+    );
+    expect(serviceSource).toContain(
+      'if (tab.status === "complete" && !isStale(tab.url || ""))',
+    );
+    expect(serviceSource).toContain(
+      "await wait(tabId, true, { awayFrom: pageUrl })",
+    );
+  });
+
+  test("typed query is verified against the box before submitting", () => {
+    // typeBackspace swallows a dropped keystroke, so a lost typo correction used
+    // to leave corrupted text in the box. Bing then credits that text while
+    // perform() compares `q` to searchQuery exactly, calls the search failed, and
+    // re-submits duplicates that earn nothing.
+    expect(serviceSource).toContain("async function syncSearchInput(");
+    expect(serviceSource).toContain(
+      "const synced = await syncSearchInput(tabId, searchQuery);",
+    );
+    expect(serviceSource).toContain(
+      'throw new Error("Search input vanished before submit.")',
+    );
+  });
+
+  test("a submit that reached a results page is not retried with the same query", () => {
+    // Bing ignores a duplicate query fired seconds later, so re-sending one that
+    // already landed on a SERP burns the retry for nothing.
+    expect(serviceSource).toContain("let reuseOnRetry = true;");
+    expect(serviceSource).toContain(
+      "reuse: attempt > 1 && reuseOnRetry && searchQuery !== previousQuery,",
+    );
+    expect(serviceSource).toContain("if (isConfirmedBingSearchUrl(landedUrl))");
+  });
+
+  test("mobile sign-in waits for the login redirect chain instead of cancelling it", () => {
+    // The next attempt's tabs.update used to cancel the in-flight
+    // bing -> login.live.com -> bing chain, so all three attempts failed and the
+    // whole mobile phase was dropped.
+    expect(serviceSource).toContain("(url) => isBingPageUrl(url),");
+    expect(serviceSource).toContain("for (let probe = 0; probe < 4; probe++)");
   });
 
   test("service worker bootstraps config before listeners rely on storage", () => {

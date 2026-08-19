@@ -42,7 +42,6 @@
     "*://*.bing.com/*",
     "https://trends.google.com/*",
     "https://wikimedia.org/*",
-    "*://rewards.bing.com/*",
     "*://login.live.com/*",
     "*://login.microsoftonline.com/*",
     "*://account.microsoft.com/*"

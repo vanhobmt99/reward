@@ -18,7 +18,7 @@
  * crashes the logger, and so it works even before config is loaded.
  */
 
-export const CRASH_LOG_KEY = "_crashLog";
+const CRASH_LOG_KEY = "_crashLog";
 const MAX_ENTRIES = 300;
 const MAX_MESSAGE_LEN = 2000;
 
@@ -119,7 +119,7 @@ export function recordCrash(context, error, extra) {
 }
 
 /** Record a non-fatal breadcrumb (e.g. "run started", "phase = mobile"). */
-export function recordEvent(context, message, extra) {
+function recordEvent(context, message, extra) {
   const entry = {
     ts: new Date().toISOString(),
     level: "event",
@@ -130,7 +130,7 @@ export function recordEvent(context, message, extra) {
   return _append(entry);
 }
 
-export async function getCrashLog() {
+async function getCrashLog() {
   const { [CRASH_LOG_KEY]: existing } = await _storageGet(CRASH_LOG_KEY);
   return Array.isArray(existing) ? existing : [];
 }

@@ -176,39 +176,6 @@ export function createNicheSession(categories, options = {}) {
   };
 }
 
-/**
- * Post-SERP scroll plan. Reading a results page means scrolling down in uneven
- * steps, occasionally back up to re-read something. Landing on a SERP and never
- * moving is the strongest remaining bot tell.
- *
- * Returns [{deltaY, pauseMs}] — deltaY < 0 means scrolling back up.
- */
-export function planScrollSteps(options = {}) {
-  const {
-    rng = Math.random,
-    mobile = false,
-    minSteps = 2,
-    maxSteps = 5,
-  } = options;
-
-  const count = minSteps + Math.floor(rng() * (maxSteps - minSteps + 1));
-  // Touch flings travel further per gesture than a desktop wheel notch.
-  const baseMin = mobile ? 220 : 120;
-  const baseMax = mobile ? 700 : 420;
-  const steps = [];
-
-  for (let i = 0; i < count; i++) {
-    const backUp = i > 0 && rng() < 0.2;
-    const magnitude = Math.round(baseMin + rng() * (baseMax - baseMin));
-    steps.push({
-      deltaY: backUp ? -Math.round(magnitude * 0.6) : magnitude,
-      // Dwell between scrolls is where "reading" actually shows up.
-      pauseMs: Math.round(400 + rng() * 2200),
-    });
-  }
-  return steps;
-}
-
 // Standard normal via Box-Muller. Two rng draws, clamped away from 0 so the
 // log never blows up.
 function gaussian(rng) {

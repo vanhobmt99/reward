@@ -50,12 +50,5 @@ export function createDefaultConfig() {
       currentSession: null,
       currentPhase: null,
     },
-    user: {
-      // `country` fills the [country] placeholder in query templates;
-      // `countryCode` picks the Google Trends region. Nothing reads a city, so
-      // no city is stored.
-      country: "",
-      countryCode: "",
-    },
   };
 }

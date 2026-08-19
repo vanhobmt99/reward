@@ -15,14 +15,13 @@
  */
 
 export const BING_SUGGEST_ENDPOINT = "https://api.bing.com/osjson.aspx";
-export const GOOGLE_TRENDS_RSS_ENDPOINT =
-  "https://trends.google.com/trending/rss";
-export const WIKIMEDIA_TOP_ENDPOINT =
+const GOOGLE_TRENDS_RSS_ENDPOINT = "https://trends.google.com/trending/rss";
+const WIKIMEDIA_TOP_ENDPOINT =
   "https://wikimedia.org/api/rest_v1/metrics/pageviews/top";
-export const SUGGEST_TIMEOUT_MS = 1800;
-export const TOPIC_SOURCE_TIMEOUT_MS = 2500;
+const SUGGEST_TIMEOUT_MS = 1800;
+const TOPIC_SOURCE_TIMEOUT_MS = 2500;
 export const MAX_SUGGESTION_LENGTH = 70;
-export const MAX_DYNAMIC_TOPIC_LENGTH = 120;
+const MAX_DYNAMIC_TOPIC_LENGTH = 120;
 export const DYNAMIC_TOPIC_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 
 const WIKIPEDIA_UTILITY_TOPIC =

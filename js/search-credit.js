@@ -5,13 +5,12 @@
  * add make-up searches when the Rewards counter lags — shortfalls are left for
  * a later re-run.
  *
- * Checkpoint helpers still compare local navigations to the real counter so
- * stall/quota detection can stop a dead session early.
+ * Checkpoint helpers still compare local navigations to the real counter, but
+ * only a FULL counter stops a phase — a merely frozen one is indistinguishable
+ * from a Rewards API publishing in a slow batch, so the plan runs to the end.
  */
 
 export const DEFAULT_POINTS_PER_SEARCH = 3;
-// Kept as 0 so older call sites that add an "allowance" stay exact-plan only.
-export const MAX_MAKEUP_SEARCHES = 0;
 
 function finiteNumber(value) {
   const number = Number(value);
@@ -48,24 +47,14 @@ export function isSearchCreditGoalReached(goal, snapshot, counterField) {
   return current !== null && current >= goal.target;
 }
 
-/** Hard cap on loop iterations = the plan size. No make-up budget. */
-export function getSearchIterationLimit(requestedSearches) {
-  return Math.max(0, Math.floor(Number(requestedSearches) || 0));
-}
-
 /**
  * Continue only while fewer than `requestedSearches` iterations have been
- * attempted. Point shortfalls never extend the plan.
+ * attempted. Point shortfalls never extend the plan, so the counter/goal state
+ * deliberately plays no part in this decision.
  */
 export function shouldContinueSearch({
   attemptedIterations,
   requestedSearches,
-  // Remaining args kept for call-site compatibility; intentionally unused.
-  successfulSearches: _successfulSearches,
-  iterationLimit: _iterationLimit,
-  creditGoal: _creditGoal,
-  snapshot: _snapshot,
-  counterField: _counterField,
 }) {
   const attempted = Math.max(0, Number(attemptedIterations) || 0);
   const requested = Math.max(0, Number(requestedSearches) || 0);

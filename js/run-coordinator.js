@@ -92,35 +92,9 @@ export function createRunCoordinator(deps) {
       await _resetRuntime(config);
     },
 
-    async forceStop(reason = "force_stop") {
-      const config = getConfig();
-      const session = config?.runtime?.currentSession;
-      log &&
-        log(
-          `[COORDINATOR] - FORCE STOP triggered. Reason: ${reason}. Active session was: ${session?.id || "none"}`,
-          "warning",
-        );
-      await _resetRuntime(config);
-    },
-
-    getActiveSession() {
-      const config = getConfig();
-      return config?.runtime?.currentSession || null;
-    },
-
     isActiveSession(sessionId) {
       const config = getConfig();
       return config?.runtime?.currentSession?.id === sessionId;
-    },
-
-    getStatus() {
-      const config = getConfig();
-      const session = config?.runtime?.currentSession;
-      return {
-        isRunning: !!config?.runtime?.running,
-        activeSession: session,
-        mode: config?.runtime?.mode || null,
-      };
     },
   };
 

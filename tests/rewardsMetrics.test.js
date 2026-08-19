@@ -57,6 +57,25 @@ describe("getCounterValue", () => {
     expect(getCounterValue([{ attributes: {} }], "progress")).toBe(0);
   });
 
+  test("reads Bing's alternate counter field names", () => {
+    // A tier that only carries the newer names used to read as a flat 0/0, which
+    // sets pcMax to 0 — that disables quota detection and pins progress at 0, so
+    // the search loop concludes points are no longer being credited and abandons
+    // the rest of the plan.
+    const tiers = [{ attributes: { pointProgress: 15, pointProgressMax: 90 } }];
+    expect(getCounterValue(tiers, "progress")).toBe(15);
+    expect(getCounterValue(tiers, "max")).toBe(90);
+  });
+
+  test("prefers a tier that reports a max over one that describes nothing", () => {
+    const tiers = [
+      { attributes: { progress: 90, max: 90 } },
+      { attributes: { somethingElse: 1 } },
+    ];
+    expect(getCounterValue(tiers, "max")).toBe(90);
+    expect(getCounterValue(tiers, "progress")).toBe(90);
+  });
+
   test("reads the tier that still has room, not blindly the first entry", () => {
     const tiers = [
       { attributes: { progress: 30, max: 30 } },

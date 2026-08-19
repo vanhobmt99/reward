@@ -139,14 +139,14 @@ function scheduleUIUpdate() {
   }, UI_UPDATE_DEBOUNCE_MS);
 }
 const limitsMap = {
-  searchDesk: { min: 0, max: [100, 300] },
-  searchMob: { min: 0, max: [100, 300] },
-  searchMin: { min: 5, max: [45, 600] },
-  searchMax: { min: 8, max: [90, 900] },
-  scheduleDesk: { min: 0, max: [100, 300] },
-  scheduleMob: { min: 0, max: [100, 300] },
-  scheduleMin: { min: 5, max: [45, 600] },
-  scheduleMax: { min: 8, max: [90, 900] },
+  searchDesk: { min: 0, max: 300 },
+  searchMob: { min: 0, max: 300 },
+  searchMin: { min: 5, max: 600 },
+  searchMax: { min: 8, max: 900 },
+  scheduleDesk: { min: 0, max: 300 },
+  scheduleMob: { min: 0, max: 300 },
+  scheduleMin: { min: 5, max: 600 },
+  scheduleMax: { min: 8, max: 900 },
 };
 const $searchDesk = $("#searchDesk");
 const $searchMob = $("#searchMob");
@@ -216,10 +216,23 @@ async function saveConfigMutation(mutator) {
   config = updated || config;
   return config;
 }
+function isIosUserAgent(ua) {
+  return /iPhone|iPad|iPod/i.test(String(ua || ""));
+}
 async function resetDevice() {
   const logs = config?.control?.log;
   try {
-    const randomDevice = devices[Math.floor(Math.random() * devices.length)];
+    // Only Chromium/Android UAs can be shipped with matching Sec-CH-UA-* client
+    // hints (see getUAMetadata in service.js, which returns null for iOS). An
+    // iPhone UA therefore goes out alongside the browser's REAL client hints —
+    // Sec-CH-UA-Platform: "Windows", Sec-CH-UA-Mobile: ?0 — and that
+    // contradiction is exactly what Bing uses to withhold mobile points. Keep the
+    // simulated mobile identity on Android so UA and headers agree.
+    const eligible = devices.filter(
+      (device) => !isIosUserAgent(device?.userAgent),
+    );
+    const pool = eligible.length > 0 ? eligible : devices;
+    const randomDevice = pool[Math.floor(Math.random() * pool.length)];
     await saveConfigMutation((next) => {
       next.device.name = randomDevice.name;
       next.device.ua = randomDevice.userAgent;
@@ -245,7 +258,7 @@ async function updateUI() {
   for (const [key, limits] of Object.entries(limitsMap)) {
     const $el = $(`#${key}`);
     $el.attr("min", limits.min);
-    $el.attr("max", limits.max[1]);
+    $el.attr("max", limits.max);
   }
   $searchDesk.val(config.search.desk);
   $searchMob.val(config.search.mob);
@@ -297,21 +310,19 @@ async function updateUI() {
   const totalCount = Number(total) || 0;
   const doneCount = Number(done) || 0;
   const failedCount = Number(failed) || 0;
-  const success = doneCount;
   // Guard division explicitly instead of relying on isFinite() to catch 0/0.
   const percent = (part) =>
     totalCount > 0 ? ((part / totalCount) * 100).toFixed(2) : "0.00";
-  const performedPercent = percent(doneCount);
-  const successPercent = percent(success);
+  const donePercent = percent(doneCount);
   const failedPercent = percent(failedCount);
-  const progressPercent = percent(success + failedCount);
+  const progressPercent = percent(doneCount + failedCount);
   $progressBar
     .parent()
     .attr(
       "title",
-      `Tổng: ${totalCount}, Đã làm: ${doneCount} (${performedPercent}%), Thành công: ${success} (${successPercent}%), Lỗi: ${failedCount} (${failedPercent}%) — Tiến độ: ${progressPercent}%`,
+      `Tổng: ${totalCount}, Đã làm: ${doneCount} (${donePercent}%), Lỗi: ${failedCount} (${failedPercent}%) — Tiến độ: ${progressPercent}%`,
     );
-  $progress.width(totalCount ? (success / totalCount) * 100 + "%" : "0%");
+  $progress.width(totalCount ? (doneCount / totalCount) * 100 + "%" : "0%");
   $failed.width(totalCount ? (failedCount / totalCount) * 100 + "%" : "0%");
   // Display only — never write storage during a render pass. Picking an initial
   // device happens once at startup (see $(document).ready).
@@ -355,7 +366,7 @@ async function updateUI() {
   // this is what makes a long mobile/activity phase not feel frozen.
   const phaseLabel = PHASE_LABELS[config?.runtime?.currentPhase] || "";
   if (totalCount > 0) {
-    const performed = success + failedCount;
+    const performed = doneCount + failedCount;
     const failText = failedCount
       ? ` · <span class="err">${failedCount} lỗi</span>`
       : "";
@@ -537,10 +548,9 @@ function clampLimitedNumber(raw, limitKey) {
   const entry = limitsMap[limitKey];
   if (!entry) return Number(raw) || 0;
   const { min, max } = entry;
-  const maxVal = max[1];
   const num = Number(raw);
   if (isNaN(num)) return min;
-  return Math.max(min, Math.min(maxVal, num));
+  return Math.max(min, Math.min(max, num));
 }
 function readLimitedNumber($el, limitKey) {
   return clampLimitedNumber($el.val(), limitKey);
@@ -620,7 +630,10 @@ $(document).ready(async function () {
   await updateUI();
 
   // Pick a random simulated device once if none is stored yet, then re-render.
-  if (!config?.device?.name) {
+  // An already-stored iOS device is re-rolled too: it cannot be given matching
+  // client hints, so it silently costs mobile points on every run (see
+  // resetDevice).
+  if (!config?.device?.name || isIosUserAgent(config?.device?.ua)) {
     await resetDevice();
     $deviceName.text(config?.device?.name || "");
   }
