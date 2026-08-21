@@ -21,10 +21,15 @@
 // worth one more try tomorrow-morning's run.
 export const MAX_FAILED_ACTIVITY_ATTEMPTS = 4;
 
-// Cards whose visible label matches an "expand/see more" control must never be
+// Cards whose visible label IS an "expand/see more" control must never be
 // remembered as attempts (they are navigation, not point-earning activities).
+// Anchored to the whole key on purpose: a key is either a URL or "type|label",
+// and a substring match also ate real cards whose description merely mentions
+// one of these phrases ("Earn more points when your friends search on Bing"),
+// so their daily confirmation was dropped on every load and the card was then
+// clicked again in the next run.
 const EXPAND_ATTEMPT_PATTERN =
-  /(^|\b)(earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng)(\b|$)/i;
+  /^(?:[a-z-]+\|)?\s*(earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng)\s*$/i;
 
 export function sanitizeActivityAttempts(attempts) {
   return Object.fromEntries(

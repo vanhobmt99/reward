@@ -9,6 +9,33 @@
  */
 
 /**
+ * Probe run by waitForRewardsSection. The new dashboard streams a heading +
+ * pulse skeletons into the visible <section>, and parks the real cards in a
+ * hidden Next.js placeholder (`<div hidden id="S:5">`). Matching any heading
+ * that merely lacks animate-pulse treated that hidden copy as "ready" and the
+ * first Daily set pass then scanned the empty visible shell.
+ */
+export function createRewardsSectionReadyProbe(patternSource) {
+  return `(() => {
+    try {
+      const re = new RegExp(${JSON.stringify(patternSource)}, "i");
+      const nodes = document.querySelectorAll('h1, h2, h3, h4, [role="heading"]');
+      for (const el of nodes) {
+        if (!re.test(el.textContent || "")) continue;
+        if (el.closest("[hidden], template")) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) continue;
+        const section = el.closest("section");
+        if (!section) return true;
+        if (section.querySelector('[class*="animate-pulse"]')) continue;
+        return true;
+      }
+      return false;
+    } catch (e) { return false; }
+  })()`;
+}
+
+/**
  * DOM helpers shared byte-for-byte by the Dashboard and Keep-earning scripts.
  * Emitted once at the top of each IIFE (before any script-specific code) so a
  * fix to normalize/textOf/isVisible/card-targeting/clicking/click bookkeeping
@@ -27,6 +54,9 @@
  */
 function activityDomHelpers(cardKeyword, maxCardTextLength) {
   return `
+			// Set by openTarget whenever it declines a card, so a pass can report why
+			// it came back empty instead of returning an unexplained zero.
+			let lastOpenSkip = '';
 			const normalize = (value) => (value || '').normalize('NFC').replace(/\\s+/g, ' ').trim();
 			const mainRoot = document.querySelector('main') || document.body;
 			const isPageChrome = (el) => Boolean(
@@ -57,6 +87,21 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 					!el.disabled &&
 					rect.top < window.innerHeight && rect.bottom > 0 &&
 					rect.left < window.innerWidth && rect.right > 0;
+			};
+			// Rendered, but NOT required to be inside the viewport. A section keeps
+			// its geometry when its heading scrolls off the top; demanding
+			// visibility there made a pass "lose" its section the moment it
+			// scrolled past the heading, after which it only scrolled further away
+			// looking for it ("daily set / keep earning heading not found").
+			const hasLayout = (el) => {
+				if (!el) return false;
+				const rect = el.getBoundingClientRect();
+				const style = getComputedStyle(el);
+				return rect.width > 0 && rect.height > 0 &&
+					style.display !== 'none' &&
+					style.visibility !== 'hidden' &&
+					style.opacity !== '0' &&
+					el.getAttribute('aria-hidden') !== 'true';
 			};
 			const interactiveSelector = 'a[href], button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
 			const actionTargetFor = (node) => {
@@ -223,8 +268,15 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				return type + '|' + (semantic || normalize(text).toLowerCase());
 			};
 			const openTarget = (target, type, text) => {
-				if (!target || !isVisible(target) || clicked.length >= safetyLimit) return false;
+				lastOpenSkip = '';
+				if (clicked.length >= safetyLimit) return false;
+				if (!target || !isVisible(target)) {
+					lastOpenSkip = 'target not visible';
+					return false;
+				}
 				const key = keyFor(target, type, text);
+				// Already-handled cards are the normal steady state, not a failure:
+				// leave lastOpenSkip empty so they stay out of the pass diagnostics.
 				if (visited.has(key) || seen.has(key)) return false;
 				seen.add(key);
 				const htmlStyle = document.documentElement.style.scrollBehavior;
@@ -247,7 +299,10 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				} else {
 					clickedOk = clickLikeUser(target);
 				}
-				if (!clickedOk) return false;
+				if (!clickedOk) {
+					lastOpenSkip = 'click point covered';
+					return false;
+				}
 				openedKeys.push(key);
 				clicked.push({ type, text: text.slice(0, 90), key });
 				return true;
@@ -272,22 +327,30 @@ export function createDashboardActivityScript(
 ${activityDomHelpers("daily", 520)}
 			const dailySetPattern = /daily set|daily check.?in|today'?s? set|bộ hàng ngày|chuỗi hàng ngày|nhiệm vụ hàng ngày|phần thưởng hàng ngày/i;
 			const nextSectionPattern = /your activity|more activities|punch cards?|recommended|quests?|activities|keep earning|hoạt động khác|kiếm thêm/i;
+			const doneIconSelector = 'svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]';
 			const isDone = (el) => {
 				const txt = textOf(el).toLowerCase();
+				// Status copy on a live card ("In progress", day-check ticks)
+				// is not completion. Treat those as open before any icon/class
+				// probe, or a multi-day card is marked done on day 1.
+				if (/in progress|not started|đang thực hiện|đang diễn ra|chưa bắt đầu/i.test(txt)) return false;
 				if (/completed|not eligible|earned last month|already done|claimed|you did it|đã hoàn thành|đã nhận|đã hoàn tất|đã xong|không đủ điều kiện/i.test(txt)) return true;
+				// The completion icon is only evidence about THIS card. Probing it on
+				// each ancestor searched that ancestor's whole subtree, so a single
+				// completed sibling card marked every card in the section as done and
+				// the pass skipped the lot. Class names still walk up: a wrapper's
+				// "completed" class does describe the card inside it.
+				if (el?.querySelector?.(doneIconSelector)) return true;
 				let node = el;
 				for (let i = 0; node && i < 6; i++) {
 					const className = String(node.className || '').toLowerCase();
 					if (className.includes('complete') || className.includes('done') || className.includes('is-completed') || className.includes('status-done') || className.includes('checked') || className.includes('finished')) return true;
-					// Also check for SVG checkmark icon inside
-					const checkIcon = node.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]');
-					if (checkIcon) return true;
 					node = node.parentElement;
 				}
 				return false;
 			};
 			const headingNodes = Array.from(mainRoot.querySelectorAll('h1, h2, h3, h4, [role="heading"], div, span, p'))
-				.filter(isVisible)
+				.filter((el) => el.matches?.('h1, h2, h3, h4, [role="heading"]') ? hasLayout(el) : isVisible(el))
 				.map((el) => ({
 					el,
 					text: textOf(el),
@@ -345,18 +408,42 @@ ${activityDomHelpers("daily", 520)}
 				item.rect.top > dailyHeading.rect.bottom + 4 &&
 				nextSectionPattern.test(item.text)
 			);
-			const dailyTop = dailyHeading.rect.bottom - 8;
-			const dailyBottom = nextHeading ?
-				nextHeading.rect.top - 8 :
-				dailyHeading.rect.bottom + Math.max(260, window.innerHeight * 0.5);
-			const isInsideDailySet = (el) => {
-				const rect = el.getBoundingClientRect();
-				return rect.bottom >= dailyTop && rect.top < dailyBottom;
-			};
+			// The dashboard wraps each block in its own <section> (id="dailyset"), so
+			// containment is exact. The geometric fallback below guesses the section
+			// ends half a viewport under the heading, which both truncated a tall
+			// Daily set (its lower cards were never clicked) and, on a short one,
+			// swallowed the following section's cards. Only trust the <section> when
+			// it does not also contain the NEXT section's heading.
+			const dailySection = dailyHeading.el.closest?.('section');
+			const sectionIsExclusive = Boolean(dailySection) && !semanticHeadings.some((item) =>
+				item.el !== dailyHeading.el &&
+				dailySection.contains(item.el) &&
+				nextSectionPattern.test(item.text)
+			);
+			// A wrapper with display:contents (or an unrendered one) reports a zero
+			// box; using it would put the section bounds at 0 and freeze the scroll
+			// recovery, so fall back to the heading geometry in that case.
+			const rawSectionRect = sectionIsExclusive ? dailySection.getBoundingClientRect() : null;
+			const sectionRect = rawSectionRect && rawSectionRect.height > 0 ? rawSectionRect : null;
+			const dailyTop = sectionRect ? sectionRect.top : dailyHeading.rect.bottom - 8;
+			const dailyBottom = sectionRect ?
+				sectionRect.bottom :
+				(nextHeading ?
+					nextHeading.rect.top - 8 :
+					dailyHeading.rect.bottom + Math.max(260, window.innerHeight * 0.5));
+			const isInsideDailySet = sectionRect ?
+				(el) => dailySection.contains(el) :
+				(el) => {
+					const rect = el.getBoundingClientRect();
+					return rect.bottom >= dailyTop && rect.top < dailyBottom;
+				};
 			const pointPattern = /\\+\\s*\\d+|\\d+\\s*(points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
 			const activityTextPattern = /quiz|poll|play|watch|explore|search now|complete|claim|check.?in|view|start|earn|trắc nghiệm|thăm dò|câu hỏi|chơi|xem|khám phá|bắt đầu|kiếm|nhận/i;
-			const skipPattern = /learn more|about|dashboard|earn more only|progress|streak|bonus|goal|member|coupon|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d|not eligible|completed|privacy|terms|download app|tìm hiểu thêm|giới thiệu|bảo mật|điều khoản|tải ứng dụng/i;
+			// Chrome-only. Never list progress/streak/about/bonus/goal/member/
+			// completed — those words sit on real Daily set cards ("In progress",
+			// "About this quiz", "Daily Set Streak"). Completion is isDone's job.
+			const skipPattern = /learn more|privacy|terms|download app|not eligible|tìm hiểu thêm|giới thiệu|bảo mật|điều khoản|tải ứng dụng|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
 			const expandPattern = /earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng/i;
 
 			const nodes = Array.from(mainRoot.querySelectorAll(
@@ -375,12 +462,17 @@ ${activityDomHelpers("daily", 520)}
 				const text = textOf(card) || textOf(target);
 				if (!text || text.length < 3) continue;
 				if (text.length > 500) continue;
-				if (expandPattern.test(text) && !pointPattern.test(text)) continue;
 
 				const anchor = target.matches?.('a[href]') ? target : target.closest?.('a[href]');
 				const href = String(target.href || anchor?.href || '').toLowerCase();
 				const type = 'daily-set';
 				const hasPoints = pointPattern.test(text) || (pointsBadgeValue(card) || 0) > 0;
+				// "Earn more" only marks an expander on a card that pays nothing. Real
+				// Daily set cards say it inside their description ("Earn more points
+				// when your friends search on Bing") and carry their reward in a badge
+				// the text patterns cannot see, so testing the text alone dropped
+				// point-bearing cards — silently, with no skip reason logged.
+				if (!hasPoints && expandPattern.test(text)) continue;
 
 				if (isDone(card) || isDone(target) || (anchor && isDone(anchor))) {
 					if (hasPoints || activityHrefPattern.test(href)) {
@@ -388,12 +480,10 @@ ${activityDomHelpers("daily", 520)}
 					}
 					continue;
 				}
-				if (skipPattern.test(text)) {
-					// Record point-bearing cards we drop so the diagnostic log shows
-					// WHY (e.g. the first daily-set card getting skipped).
-					if (hasPoints) skipped.push({ type, text: text.slice(0, 90), reason: 'matched skip pattern' });
-					continue;
-				}
+				// Point-bearing cards are never chrome. Applying skipPattern to
+				// them dropped live Daily set cards whose description mentioned
+				// "progress", "streak", or "about".
+				if (!hasPoints && skipPattern.test(text)) continue;
 
 				const score =
 					(hasPoints ? 4 : 0) +
@@ -405,23 +495,60 @@ ${activityDomHelpers("daily", 520)}
 					continue;
 				}
 
-				openTarget(target, type, text);
+				if (!openTarget(target, type, text) && hasPoints && lastOpenSkip) {
+					skipped.push({ type, text: text.slice(0, 90), reason: lastOpenSkip });
+				}
 			}
 
-			// The heading scrolls into view at the BOTTOM edge of the viewport, so
-			// the cards under it are still off-screen and isVisible() rejects every
-			// one of them. Without this the pass reports zero and never scrolls
-			// again — the Daily set silently never gets clicked. Bounded by
-			// dailyBottom so we stop once the whole section has been seen.
-			if (clicked.length === 0 && dailyBottom > window.innerHeight - 4) {
+			// Nothing clicked yet: bring the rest of the section into the viewport.
+			// isVisible() rejects every off-screen card, so a section that is not
+			// fully on screen reports zero and, without a scroll, never gets
+			// another look — the Daily set silently never gets clicked.
+			if (clicked.length === 0) {
+				const loadingRoot = (sectionIsExclusive && dailySection) ?
+					dailySection :
+					dailyHeading.el.closest?.('section');
+				// Visible heading + pulse grid is the Suspense fallback. Without a
+				// retry the activity loop treats 3 empty passes as "Daily set idle"
+				// and leaves for Keep earning before the cards hydrate.
+				if (loadingRoot?.querySelector?.('[class*="animate-pulse"]')) {
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'daily set cards still loading',
+						url: location.href
+					};
+				}
 				const doc = document.documentElement;
 				const maxScroll = Math.max(
 					doc.scrollHeight || 0,
 					document.body?.scrollHeight || 0
 				);
-				if (window.scrollY + window.innerHeight < maxScroll - 20) {
+				const canScrollDown = window.scrollY + window.innerHeight < maxScroll - 20;
+				const below = dailyBottom - (window.innerHeight - 4);
+				const scrollStep = Math.max(320, Math.floor(window.innerHeight * 0.6));
+				// Section starts below the fold: jump straight to it. Crawling one
+				// viewport per pass costs a full score check each time.
+				if (dailyTop >= window.innerHeight - 4 && canScrollDown) {
+					window.scrollBy({ top: Math.floor(dailyTop) - 40, left: 0, behavior: 'instant' });
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled to the Daily set section',
+						url: location.href
+					};
+				}
+				// More of the section is below the fold. Never scroll further than
+				// its end, so the heading is not pushed off the top for nothing.
+				if (below > 40 && canScrollDown) {
 					window.scrollBy({
-						top: Math.max(320, Math.floor(window.innerHeight * 0.6)),
+						top: Math.min(scrollStep, Math.ceil(below)),
 						left: 0,
 						behavior: 'instant'
 					});
@@ -432,6 +559,21 @@ ${activityDomHelpers("daily", 520)}
 						pressPoint,
 						retry: true,
 						reason: 'scrolled for more Daily set cards',
+						url: location.href
+					};
+				}
+				// Whole section now sits above the viewport (an earlier scroll
+				// overshot it, or the page restored a lower position): come back up
+				// instead of reporting an empty section.
+				if (dailyBottom < 4 && window.scrollY > 0) {
+					window.scrollBy({ top: -scrollStep, left: 0, behavior: 'instant' });
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled back up to the Daily set',
 						url: location.href
 					};
 				}
@@ -469,6 +611,11 @@ ${activityDomHelpers("earn", 560)}
 				if (/silver level required|gold level required|level required|required|not eligible|locked|yêu cầu cấp|yêu cầu trình độ|bị khóa/i.test(txt)) {
 					return 'required or locked';
 				}
+				// Day-check ticks live inside an "In progress" card. The icon
+				// probe below would otherwise condemn the whole card as done.
+				if (/in progress|not started|đang thực hiện|đang diễn ra|chưa bắt đầu/i.test(txt)) {
+					return '';
+				}
 				if (/completed|earned last month|already done|claimed|you did it|đã hoàn thành|đã nhận|đã hoàn tất|đã xong/i.test(txt)) {
 					return 'already completed';
 				}
@@ -479,19 +626,23 @@ ${activityDomHelpers("earn", 560)}
 						String(node.className || '')
 					].filter(Boolean).join(' ')));
 				if (lockProbe) return 'required or locked';
+				// Same as the Daily set pass: the completion icon only says something
+				// about this card, so probe it here and not on every ancestor (which
+				// searched their whole subtree and condemned every sibling card).
+				if (el?.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]')) {
+					return 'already completed';
+				}
 				let node = el;
 				for (let i = 0; node && i < 6; i++) {
 					const className = String(node.className || '').toLowerCase();
 					if (className.includes('locked') || className.includes('required')) return 'required or locked';
 					if (className.includes('complete') || className.includes('done') || className.includes('is-completed') || className.includes('status-done') || className.includes('checked') || className.includes('finished')) return 'already completed';
-					const checkIcon = node.querySelector?.('svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]');
-					if (checkIcon) return 'already completed';
 					node = node.parentElement;
 				}
 				return '';
 			};
 			const markerNodes = Array.from(mainRoot.querySelectorAll('h1, h2, h3, [role="heading"], div, span, p'))
-				.filter(isVisible)
+				.filter((el) => el.matches?.('h1, h2, h3, [role="heading"]') ? hasLayout(el) : isVisible(el))
 				.map((el) => ({
 					el,
 					text: textOf(el),
@@ -500,7 +651,12 @@ ${activityDomHelpers("earn", 560)}
 				}))
 				.filter((item) => item.text.length > 0 && item.text.length < 160)
 				.sort((a, b) => a.rect.top - b.rect.top);
-			const keepHeading = markerNodes.find((item) => /keep earning|more activities|more points|earn more|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm/i.test(item.text));
+			const keepHeadingPattern = /keep earning|more activities|more points|earn more|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm/i;
+			// Prefer a real heading so the "Earn more" CTA span on the Daily set
+			// page cannot steal the Keep earning anchor.
+			const keepHeading =
+				markerNodes.find((item) => item.semantic && item.text.length <= 48 && keepHeadingPattern.test(item.text)) ||
+				markerNodes.find((item) => item.text.length <= 48 && keepHeadingPattern.test(item.text));
 			if (!keepHeading) {
 				const doc = document.documentElement;
 				const maxScroll = Math.max(
@@ -530,18 +686,34 @@ ${activityDomHelpers("earn", 560)}
 			const nextHeading = markerNodes.find((item) =>
 				item.rect.top > keepHeading.rect.bottom + 4 &&
 				item.semantic &&
-				!/keep earning|more activities|more points|earn more|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm/i.test(item.text)
+				!keepHeadingPattern.test(item.text)
 			);
-			const keepTop = keepHeading.rect.bottom - 8;
-			const earnBottom = nextHeading ? nextHeading.rect.top - 8 : Number.POSITIVE_INFINITY;
-			const isInsideEarnArea = (el) => {
-				const rect = el.getBoundingClientRect();
-				return rect.bottom >= keepTop && rect.top < earnBottom;
-			};
+			// Same exclusive-<section> rule as Daily set. Geometric
+			// heading→next-heading bounds truncated a tall Keep earning grid
+			// and, on a short one, swallowed the following section.
+			const keepSection = keepHeading.el.closest?.('section');
+			const sectionIsExclusive = Boolean(keepSection) && !markerNodes.some((item) =>
+				item.semantic &&
+				item.el !== keepHeading.el &&
+				keepSection.contains(item.el) &&
+				!keepHeadingPattern.test(item.text)
+			);
+			const rawSectionRect = sectionIsExclusive ? keepSection.getBoundingClientRect() : null;
+			const sectionRect = rawSectionRect && rawSectionRect.height > 0 ? rawSectionRect : null;
+			const keepTop = sectionRect ? sectionRect.top : keepHeading.rect.bottom - 8;
+			const earnBottom = sectionRect ?
+				sectionRect.bottom :
+				(nextHeading ? nextHeading.rect.top - 8 : Number.POSITIVE_INFINITY);
+			const isInsideEarnArea = sectionRect ?
+				(el) => keepSection.contains(el) :
+				(el) => {
+					const rect = el.getBoundingClientRect();
+					return rect.bottom >= keepTop && rect.top < earnBottom;
+				};
 			const nonCardPattern = /privacy|terms|dashboard only|no points|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback/i;
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
 			const activityTextPattern = /quiz|poll|play|watch|explore|search now|complete|claim|check.?in|view|start|earn|tr\\u1eafc nghi\\u1ec7m|th\\u0103m d\\u00f2|c\\u00e2u h\\u1ecfi|ch\\u01a1i|xem|kh\\u00e1m ph\\u00e1|b\\u1eaft \\u0111\\u1ea7u|ki\\u1ebfm|nh\\u1eadn/i;
-			const fallbackSkipPattern = /learn more|about|dashboard|progress|streak|bonus|goal|member|available|ready to claim|privacy|terms|download app|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
+			const fallbackSkipPattern = /learn more|privacy|terms|download app|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
 			const fallbackCandidates = [];
 			const rewardPointsPattern = /(?:^|[^\\d])\\+\\s*[1-9]\\d*(?:\\s*(?:points?|pts?|điểm|đ))?(?![a-zA-Z0-9_])|(?:^|[^\\d])(?:[1-9]\\d*)\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const zeroPointsPattern = /(?:^|[^\\d])(?:\\+\\s*)?0\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
@@ -599,17 +771,77 @@ ${activityDomHelpers("earn", 560)}
 				}
 				if (!href && !target.matches?.('button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])')) continue;
 
-				openTarget(target, type, text);
+				if (!openTarget(target, type, text) && lastOpenSkip) {
+					skipped.push({ type, text: text.slice(0, 90), reason: lastOpenSkip });
+				}
 			}
 
 			if (clicked.length === 0) {
+				const loadingRoot = (sectionIsExclusive && keepSection) ?
+					keepSection :
+					keepHeading.el.closest?.('section');
+				if (loadingRoot?.querySelector?.('[class*="animate-pulse"]')) {
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'keep earning cards still loading',
+						url: location.href
+					};
+				}
 				const doc = document.documentElement;
 				const maxScroll = Math.max(
 					doc.scrollHeight || 0,
 					document.body?.scrollHeight || 0
 				);
-				const canScroll = window.scrollY + window.innerHeight < maxScroll - 20;
-				if (canScroll) {
+				const canScrollDown = window.scrollY + window.innerHeight < maxScroll - 20;
+				const below = Number.isFinite(earnBottom) ?
+					earnBottom - (window.innerHeight - 4) :
+					0;
+				const scrollStep = Math.max(320, Math.floor(window.innerHeight * 0.6));
+				if (keepTop >= window.innerHeight - 4 && canScrollDown) {
+					window.scrollBy({ top: Math.floor(keepTop) - 40, left: 0, behavior: 'instant' });
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled to the Keep earning section',
+						url: location.href
+					};
+				}
+				if (below > 40 && canScrollDown) {
+					window.scrollBy({
+						top: Math.min(scrollStep, Math.ceil(below)),
+						left: 0,
+						behavior: 'instant'
+					});
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled for more earn cards',
+						url: location.href
+					};
+				}
+				if (Number.isFinite(earnBottom) && earnBottom < 4 && window.scrollY > 0) {
+					window.scrollBy({ top: -scrollStep, left: 0, behavior: 'instant' });
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled back up to Keep earning',
+						url: location.href
+					};
+				}
+				if (!Number.isFinite(earnBottom) && canScrollDown) {
 					window.scrollBy({
 						top: Math.max(520, Math.floor(window.innerHeight * 0.85)),
 						left: 0,

@@ -33,6 +33,18 @@ describe("sanitizeActivityAttempts", () => {
     const attempts = { "daily poll": 1, "news quiz": 2 };
     expect(sanitizeActivityAttempts(attempts)).toEqual(attempts);
   });
+
+  test("keeps a card whose label only mentions an expand phrase", () => {
+    const attempts = {
+      "daily-set|turn referrals into rewards earn more points when your friends search on bing": 2,
+      "daily-set|earn more": 1,
+      "https://rewards.bing.com/referandearn/?form=ML2XHD": 3,
+    };
+    expect(sanitizeActivityAttempts(attempts)).toEqual({
+      "daily-set|turn referrals into rewards earn more points when your friends search on bing": 2,
+      "https://rewards.bing.com/referandearn/?form=ML2XHD": 3,
+    });
+  });
 });
 
 describe("sanitizeActivityConfirmed", () => {

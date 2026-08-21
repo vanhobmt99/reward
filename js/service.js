@@ -65,6 +65,7 @@ import {
   createEarnActivityScript,
   createSolveActivityScript,
   createClaimReadyScript,
+  createRewardsSectionReadyProbe,
 } from "/js/injected-scripts.js";
 import { createCookieHelpers } from "/js/cookies.js";
 import { installGlobalCrashHandlers, recordCrash } from "/js/crash-logger.js";
@@ -3734,20 +3735,7 @@ async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
   // Matching the heading alone therefore reports "ready" against an empty
   // section, which is exactly the first-pass click miss this wait exists to
   // prevent. Require the heading's section to be past its skeleton state too.
-  const probe = `(() => {
-    try {
-      const re = new RegExp(${JSON.stringify(patternSource)}, "i");
-      const nodes = document.querySelectorAll('h1, h2, h3, h4, [role="heading"]');
-      for (const el of nodes) {
-        if (!re.test(el.textContent || "")) continue;
-        const section = el.closest("section");
-        if (!section) return true;
-        if (section.querySelector('[class*="animate-pulse"]')) continue;
-        return true;
-      }
-      return false;
-    } catch (e) { return false; }
-  })()`;
+  const probe = createRewardsSectionReadyProbe(patternSource);
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
     if (!isRuntimeActive()) return false;
