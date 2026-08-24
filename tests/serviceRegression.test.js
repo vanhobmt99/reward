@@ -560,6 +560,8 @@ describe("service regressions", () => {
     expect(serviceSource).toContain(
       "createEarnActivityScript([...blockedKeys], 1, true)",
     );
+    expect(serviceSource).toContain("refreshSolvePressPoint(");
+    expect(serviceSource).toContain("refreshClaimPressPoint(");
   });
 
   test("search path does not open organic result links", () => {

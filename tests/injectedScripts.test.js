@@ -974,6 +974,7 @@ describe("createSolveActivityScript", () => {
       text: "Answer A",
       pressPoint: { x: 100, y: 70 },
     });
+    expect(result.targetKey).toMatch(/answer-0|Answer A/i);
     expect(button.click).not.toHaveBeenCalled();
   });
 
@@ -1058,7 +1059,7 @@ describe("createClaimReadyScript", () => {
     expect(result).toMatchObject({ clicked: true, count: 6 });
   });
 
-  test('clicks a standalone "Claim points" confirm button', () => {
+  test('clicks a standalone "Claim points" confirm only after opening the claim flow', () => {
     // The confirm control that appears after opening the card (real text).
     document.body.innerHTML = `<button><span>Claim points</span></button>`;
     const btn = document.querySelector("button");
@@ -1076,11 +1077,104 @@ describe("createClaimReadyScript", () => {
       clicked = true;
     };
 
-    const script = createClaimReadyScript();
+    const script = createClaimReadyScript(false, true);
     const result = new Function("return (" + script + ")")();
 
     expect(clicked).toBe(true);
     expect(result).toMatchObject({ clicked: true });
+  });
+
+  test('does not click a standalone "Claim points" control without an opened claim flow', () => {
+    document.body.innerHTML = `<button><span>Claim points</span></button>`;
+    const btn = document.querySelector("button");
+    btn.getBoundingClientRect = () => ({
+      width: 140,
+      height: 40,
+      top: 0,
+      bottom: 40,
+      left: 0,
+      right: 140,
+    });
+    btn.scrollIntoView = () => {};
+    btn.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => btn);
+
+    const result = new Function(
+      "return (" + createClaimReadyScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: false,
+      reason: "no claim control found",
+    });
+    expect(btn.click).not.toHaveBeenCalled();
+  });
+
+  test("waits for the confirm control instead of reopening the ready card", () => {
+    document.body.innerHTML = `
+      <button aria-expanded="true">
+        <p>Ready to claim</p>
+        <p>6</p>
+        <p>Claim</p>
+      </button>`;
+    const btn = document.querySelector("button");
+    btn.getBoundingClientRect = () => ({
+      width: 120,
+      height: 40,
+      top: 0,
+      bottom: 40,
+      left: 0,
+      right: 120,
+    });
+    btn.scrollIntoView = () => {};
+    btn.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => btn);
+
+    const result = new Function(
+      "return (" + createClaimReadyScript(true, true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: false,
+      retry: true,
+      count: 6,
+      reason: "claim confirmation not ready",
+    });
+    expect(btn.click).not.toHaveBeenCalled();
+  });
+
+  test("refuses a claim press when an overlay covers the target", () => {
+    document.body.innerHTML = `
+      <button aria-expanded="false">
+        <p>Ready to claim</p>
+        <p>6</p>
+        <p>Claim</p>
+      </button>
+      <div id="overlay"></div>`;
+    const btn = document.querySelector("button");
+    const overlay = document.querySelector("#overlay");
+    btn.getBoundingClientRect = () => ({
+      width: 120,
+      height: 40,
+      top: 0,
+      bottom: 40,
+      left: 0,
+      right: 120,
+    });
+    btn.scrollIntoView = () => {};
+    btn.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => overlay);
+
+    const result = new Function(
+      "return (" + createClaimReadyScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: false,
+      retry: true,
+      reason: "target covered or moved",
+    });
+    expect(btn.click).not.toHaveBeenCalled();
   });
 
   test("finds a React Aria claim control in a dialog and defers to CDP", () => {
@@ -1108,6 +1202,7 @@ describe("createClaimReadyScript", () => {
     });
     control.scrollIntoView = () => {};
     control.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => control);
 
     const script = createClaimReadyScript(true);
     const result = new Function("return (" + script + ")")();
@@ -1117,6 +1212,7 @@ describe("createClaimReadyScript", () => {
       stage: "confirm",
       pressPoint: { x: 100, y: 70 },
     });
+    expect(result.targetKey).toMatch(/^confirm\|/);
     expect(control.click).not.toHaveBeenCalled();
   });
 });
@@ -1284,6 +1380,7 @@ describe("live rewards.bing.com markup", () => {
     });
     cardEl.scrollIntoView = () => {};
     cardEl.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => cardEl);
 
     const result = new Function(
       "return (" + createClaimReadyScript(true) + ")",

@@ -20,3 +20,17 @@ export function formatActivityDiag(
     skipped.map((s) => (s.reason ? `${s.text} <${s.reason}>` : s.text)),
   )} reason=${reason || "-"} delta=${pointDelta} processedTabs=${processedTabs} confirmed=${confirmed}`;
 }
+
+// A successful score delta is terminal even if the claim dialog has not
+// disappeared yet. Without this guard, a slow React update can leave the
+// confirm button visible and the next pass presses it a second time.
+export function shouldStopClaimPass({
+  clicked,
+  count,
+  pointDelta,
+  retry,
+} = {}) {
+  if (Number.isFinite(pointDelta) && pointDelta > 0) return true;
+  if (retry) return false;
+  return !clicked || count === 0;
+}

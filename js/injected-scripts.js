@@ -194,7 +194,7 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				] : [];
 				const hit = points
 					.map(([x, y]) => ({ x, y, element: document.elementFromPoint(x, y) }))
-					.find((point) => point.element && (target.contains(point.element) || target === point.element || point.element.contains(target)));
+					.find((point) => point.element && (target.contains(point.element) || target === point.element));
 				// No hit means an overlay/toast covers every probe point, or the layout
 				// shifted after measuring. Instead of dropping the card (a silent click
 				// miss), fall back to dispatching directly on the target: synthetic
@@ -960,6 +960,15 @@ export function createSolveActivityScript(deferToCdp = false) {
 				scored.sort((a, b) => a.score - b.score);
 				if (scored.length > 0) {
 					const { target, text } = scored[0];
+					const targetKey = normalize([
+						target.id,
+						target.getAttribute?.('data-testid'),
+						target.getAttribute?.('aria-label'),
+						target.getAttribute?.('title'),
+						target.getAttribute?.('name'),
+						target.value,
+						text
+					].filter(Boolean).join('|')).toLowerCase();
 					const htmlStyle = document.documentElement.style.scrollBehavior;
 					const bodyStyle = document.body.style.scrollBehavior;
 					try {
@@ -976,12 +985,13 @@ export function createSolveActivityScript(deferToCdp = false) {
 					const cy = Math.max(1, Math.min(window.innerHeight - 2, rect.top + rect.height / 2));
 					const hit = document.elementFromPoint?.(cx, cy);
 					if (deferToCdp) {
-						if (!hit || !(target === hit || target.contains(hit) || hit.contains(target))) {
+						if (!hit || !(target === hit || target.contains(hit))) {
 							return { clicked: false, reason: 'target covered or moved', url: location.href };
 						}
 						return {
 							clicked: true,
 							text: text.slice(0, 80) || target.tagName,
+							targetKey,
 							pressPoint: { x: cx, y: cy },
 							url: location.href
 						};
@@ -1002,10 +1012,14 @@ export function createSolveActivityScript(deferToCdp = false) {
  * Returns {clicked, count, text, reason}; the service worker confirms real
  * collection via the score delta and stops when nothing changes.
  */
-export function createClaimReadyScript(deferToCdp = false) {
+export function createClaimReadyScript(
+  deferToCdp = false,
+  allowStandaloneConfirm = false,
+) {
   return `
 			(function() {
 				const deferToCdp = ${Boolean(deferToCdp)};
+				const allowStandaloneConfirm = ${Boolean(allowStandaloneConfirm)};
 				const normalize = (v) => (v || '').replace(/\\s+/g, ' ').trim();
 				const isVisible = (el) => {
 					if (!el) return false;
@@ -1081,7 +1095,7 @@ export function createClaimReadyScript(deferToCdp = false) {
 				).filter(isVisible);
 				const confirmClickables = visibleDialogs.length ?
 					visibleDialogs.flatMap((root) => Array.from(root.querySelectorAll(clickableSelector))) :
-					clickables;
+					(allowStandaloneConfirm ? clickables : []);
 				for (const el of confirmClickables) {
 					if (!isVisible(el)) continue;
 					const t = textOf(el);
@@ -1094,10 +1108,19 @@ export function createClaimReadyScript(deferToCdp = false) {
 						break;
 					}
 				}
-				if (!target && readyCard) {
+				const claimFlowActive = allowStandaloneConfirm || visibleDialogs.length > 0;
+				if (!target && readyCard && !claimFlowActive) {
 					target = readyCard;
 					targetText = textOf(readyCard);
 					stage = 'open';
+				}
+				if (!target && claimFlowActive) {
+					return {
+						clicked: false,
+						retry: true,
+						count: pendingCount === null ? -1 : pendingCount,
+						reason: 'claim confirmation not ready',
+					};
 				}
 
 				if (!target) {
@@ -1125,17 +1148,54 @@ export function createClaimReadyScript(deferToCdp = false) {
 					};
 				}
 
-				try { target.scrollIntoView({ block: 'center' }); } catch (_) {}
+				const targetIdentity = normalize([
+					target.id,
+					target.getAttribute?.('data-testid'),
+					target.getAttribute?.('aria-label'),
+					target.getAttribute?.('title'),
+					target.getAttribute?.('name'),
+					target.href,
+					targetText
+				].filter(Boolean).join('|')).toLowerCase();
+				const targetKey = stage + '|' + targetIdentity;
+				const htmlStyle = document.documentElement.style.scrollBehavior;
+				const bodyStyle = document.body.style.scrollBehavior;
+				try {
+					document.documentElement.style.scrollBehavior = 'auto';
+					document.body.style.scrollBehavior = 'auto';
+					target.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' });
+				} catch (_) {}
+				try {
+					document.documentElement.style.scrollBehavior = htmlStyle;
+					document.body.style.scrollBehavior = bodyStyle;
+				} catch (_) {}
 				// Microsoft Rewards cards/buttons are React Aria pressables
 				// (data-react-aria-pressable): usePress listens on pointerdown/up
 				// and IGNORES a bare element.click(). Dispatch a full pointer +
 				// mouse press sequence so the press actually registers.
 				const pressPoint = (function press(el) {
 					const rect = el.getBoundingClientRect();
-					const cx = rect.left + rect.width / 2;
-					const cy = rect.top + rect.height / 2;
-					if (deferToCdp) return { x: cx, y: cy };
-					const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: cx, clientY: cy, button: 0, buttons: 1 };
+					const visibleLeft = Math.max(rect.left, 1);
+					const visibleRight = Math.min(rect.right, window.innerWidth - 2);
+					const visibleTop = Math.max(rect.top, 1);
+					const visibleBottom = Math.min(rect.bottom, window.innerHeight - 2);
+					if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) return null;
+					const cx = (visibleLeft + visibleRight) / 2;
+					const cy = (visibleTop + visibleBottom) / 2;
+					const points = [
+						[cx, cy],
+						[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), cy],
+						[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), cy],
+						[cx, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],
+						[cx, visibleBottom - Math.min(12, (visibleBottom - visibleTop) / 2)]
+					];
+					const hit = points
+						.map(([x, y]) => ({ x, y, element: document.elementFromPoint?.(x, y) }))
+						.find((point) => point.element && (el === point.element || el.contains(point.element)));
+					if (deferToCdp) return hit ? { x: hit.x, y: hit.y } : null;
+					const x = hit?.x ?? cx;
+					const y = hit?.y ?? cy;
+					const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
 					const pbase = Object.assign({}, base, { pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 });
 					const up = { buttons: 0 };
 					const PE = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;
@@ -1149,13 +1209,24 @@ export function createClaimReadyScript(deferToCdp = false) {
 					fire(ME, 'mouseup', Object.assign({}, base, up));
 					fire(ME, 'click', Object.assign({}, base, up));
 					try { el.click(); } catch (_) {}
-					return { x: cx, y: cy };
+					return { x, y };
 				})(target);
+				if (!pressPoint) {
+					return {
+						clicked: false,
+						retry: true,
+						stage,
+						count: pendingCount === null ? -1 : pendingCount,
+						targetKey,
+						reason: 'target covered or moved',
+					};
+				}
 				return {
 					clicked: true,
 					stage: stage,
 					count: pendingCount === null ? -1 : pendingCount,
 					text: targetText.slice(0, 80),
+					targetKey,
 					pressPoint,
 				};
 			})()

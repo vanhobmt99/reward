@@ -39,7 +39,10 @@ import {
 } from "/js/search-phases.js";
 import { createDefaultConfig } from "/js/config-defaults.js";
 import { buildRewardsSnapshot, getScoreDelta } from "/js/rewards-metrics.js";
-import { formatActivityDiag } from "/js/activity-pass-utils.js";
+import {
+  formatActivityDiag,
+  shouldStopClaimPass,
+} from "/js/activity-pass-utils.js";
 import {
   migrateActivityMemory,
   getBlockedActivityKeys,
@@ -3520,13 +3523,11 @@ async function completeRewardActivityTab(tabId) {
       });
       const value = result?.result?.value;
       if (!value?.clicked) break;
+      const freshPoint = await refreshSolvePressPoint(tabId, value.targetKey);
       if (
         !value.pressPoint ||
-        !(await dispatchTrustedPress(
-          tabId,
-          value.pressPoint,
-          "ACTIVITY SOLVER",
-        ))
+        !freshPoint ||
+        !(await dispatchTrustedPress(tabId, freshPoint, "ACTIVITY SOLVER"))
       ) {
         logs &&
           log(
@@ -3689,6 +3690,59 @@ async function dispatchTrustedPress(tabId, point, context = "ACTIVITY") {
       );
     return false;
   }
+}
+
+async function refreshTrustedPressPoint(
+  tabId,
+  expression,
+  expectedKey,
+  context,
+) {
+  if (!expectedKey) return null;
+  const freshResult = await race(
+    chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+      expression,
+      returnByValue: true,
+    }),
+    mediumDelay,
+    `Failed to refresh ${context} click target.`,
+  ).catch(() => null);
+  const fresh = freshResult?.result?.value;
+  if (
+    fresh?.targetKey !== expectedKey ||
+    !fresh?.clicked ||
+    !fresh?.pressPoint
+  ) {
+    logs &&
+      log(
+        `[${context}] Target changed before trusted click; skipping stale point.`,
+        "warning",
+      );
+    return null;
+  }
+  return fresh.pressPoint;
+}
+
+async function refreshSolvePressPoint(tabId, expectedKey) {
+  return refreshTrustedPressPoint(
+    tabId,
+    createSolveActivityScript(true),
+    expectedKey,
+    "ACTIVITY SOLVER",
+  );
+}
+
+async function refreshClaimPressPoint(
+  tabId,
+  expectedKey,
+  allowStandaloneConfirm,
+) {
+  return refreshTrustedPressPoint(
+    tabId,
+    createClaimReadyScript(true, allowStandaloneConfirm),
+    expectedKey,
+    "CLAIM",
+  );
 }
 
 // Runtime.evaluate and Input.dispatchMouseEvent cross process boundaries. The
@@ -4124,9 +4178,9 @@ async function runEarnActivityPass(
 
 // Silent "Ready to claim" collector: clicks the pending-points card on the
 // dashboard and confirms it actually collected via the Rewards score delta.
-async function runClaimReadyPass(tabId, pass) {
+async function runClaimReadyPass(tabId, pass, allowStandaloneConfirm = false) {
   const beforeScore = await fetchRewardsSnapshot();
-  const claimScript = createClaimReadyScript(true);
+  const claimScript = createClaimReadyScript(true, allowStandaloneConfirm);
   const result = await race(
     chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
       expression: claimScript,
@@ -4142,8 +4196,19 @@ async function runClaimReadyPass(tabId, pass) {
 
   const value = result?.result?.value || {};
   let clicked = Boolean(value.clicked);
+  let retry = Boolean(value.retry);
   if (clicked && value.pressPoint) {
-    clicked = await dispatchTrustedPress(tabId, value.pressPoint, "CLAIM");
+    const freshPoint = await refreshClaimPressPoint(
+      tabId,
+      value.targetKey,
+      allowStandaloneConfirm,
+    );
+    if (!freshPoint) {
+      clicked = false;
+      retry = true;
+    } else {
+      clicked = await dispatchTrustedPress(tabId, freshPoint, "CLAIM");
+    }
   }
   if (value.reason) {
     logs && log(`[ACTIVITY] Claim pass ${pass}: ${value.reason}.`, "update");
@@ -4188,7 +4253,8 @@ async function runClaimReadyPass(tabId, pass) {
 
   return {
     clicked,
-    retry: Boolean(value.retry),
+    retry,
+    stage: value.stage || null,
     count: Number.isFinite(value.count) ? value.count : null,
     pointDelta,
   };
@@ -4442,9 +4508,17 @@ async function activity(tabId, interruptible = true, options = {}) {
             await delay(mediumDelay, interruptible);
           }
           await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
+          let claimFlowOpened = false;
           for (let pass = 1; pass <= 6; pass++) {
             if (!shouldContinueActivity()) break;
-            const claimResult = await runClaimReadyPass(tabId, pass);
+            const claimResult = await runClaimReadyPass(
+              tabId,
+              pass,
+              claimFlowOpened,
+            );
+            if (claimResult.clicked && claimResult.stage === "open") {
+              claimFlowOpened = true;
+            }
             if (
               Number.isFinite(claimResult.pointDelta) &&
               claimResult.pointDelta > 0
@@ -4453,12 +4527,13 @@ async function activity(tabId, interruptible = true, options = {}) {
               clicked = true;
               measuredDelta += claimResult.pointDelta;
             }
-            // Stop when nothing was clickable or the pending count reached zero.
+            // Stop immediately after a confirmed delta so a slow-closing dialog
+            // cannot receive the same confirm press on the next pass.
+            if (shouldStopClaimPass(claimResult)) break;
             if (claimResult.retry) {
               await delay(shortestDelay, true);
               continue;
             }
-            if (!claimResult.clicked || claimResult.count === 0) break;
           }
         } catch (claimError) {
           logs &&

@@ -1,6 +1,8 @@
 const { loadEsmModule } = require("./esm-loader.js");
 
-const { formatActivityDiag } = loadEsmModule("../js/activity-pass-utils.js");
+const { formatActivityDiag, shouldStopClaimPass } = loadEsmModule(
+  "../js/activity-pass-utils.js",
+);
 
 describe("formatActivityDiag", () => {
   test("matches the exact legacy DIAG line format", () => {
@@ -36,5 +38,48 @@ describe("formatActivityDiag", () => {
 
   test("tolerates missing clicked/skipped arrays", () => {
     expect(() => formatActivityDiag("Earn", 3, {})).not.toThrow();
+  });
+});
+
+describe("shouldStopClaimPass", () => {
+  test("stops immediately after points are confirmed", () => {
+    expect(
+      shouldStopClaimPass({
+        clicked: true,
+        count: 6,
+        pointDelta: 6,
+        retry: false,
+      }),
+    ).toBe(true);
+  });
+
+  test("continues from the opened card to its confirm control", () => {
+    expect(
+      shouldStopClaimPass({
+        clicked: true,
+        count: 6,
+        pointDelta: 0,
+        retry: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("honours retries before treating a missing control as terminal", () => {
+    expect(
+      shouldStopClaimPass({
+        clicked: false,
+        count: null,
+        pointDelta: null,
+        retry: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldStopClaimPass({
+        clicked: false,
+        count: 0,
+        pointDelta: null,
+        retry: false,
+      }),
+    ).toBe(true);
   });
 });
