@@ -1,5 +1,6 @@
 /**
  * @jest-environment jsdom
+ * @jest-environment-options {"url":"https://www.bing.com/search?q=test"}
  */
 
 const { loadEsmModule } = require("./esm-loader.js");
@@ -940,6 +941,10 @@ describe("createEarnActivityScript", () => {
 });
 
 describe("createSolveActivityScript", () => {
+  beforeEach(() => {
+    sessionStorage.setItem("rsaSearchActivityViewed", "1");
+  });
+
   test("produces syntactically valid JS", () => {
     assertCompiles(createSolveActivityScript());
   });
@@ -948,6 +953,25 @@ describe("createSolveActivityScript", () => {
     const script = createSolveActivityScript();
     expect(script).toContain("(function()");
     expect(script).toContain("})()");
+  });
+
+  test("retries after preparing a Bing search page instead of claiming a click", () => {
+    document.body.innerHTML = `<main><h1>Bing Homepage quiz</h1></main>`;
+    sessionStorage.removeItem("rsaSearchActivityViewed");
+    window.scrollBy = jest.fn();
+
+    const result = new Function(
+      "return (" + createSolveActivityScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: false,
+      retry: true,
+      text: "viewed Bing search results",
+    });
+    expect(result.pressPoint).toBeUndefined();
+    expect(result.targetKey).toBeUndefined();
+    expect(window.scrollBy).toHaveBeenCalled();
   });
 
   test("returns a trusted press point without synthetic click", () => {
@@ -976,6 +1000,39 @@ describe("createSolveActivityScript", () => {
     });
     expect(result.targetKey).toMatch(/answer-0|Answer A/i);
     expect(button.click).not.toHaveBeenCalled();
+  });
+
+  test("recognizes Bing quiz answer links without selecting organic results", () => {
+    document.body.innerHTML = `
+      <a id="organic" href="https://example.com/article">Croissant history</a>
+      <a id="answer" class="acf-button-standard__link"
+         href="/search?q=Austria&amp;filters=WQId%3A%221%22+WQCI%3A%220%22&amp;FORM=BTJQOD">
+        A. Austria
+      </a>`;
+    const answer = document.querySelector("#answer");
+    answer.getBoundingClientRect = () => ({
+      width: 556,
+      height: 64,
+      top: 294,
+      bottom: 358,
+      left: 180,
+      right: 736,
+    });
+    answer.scrollIntoView = () => {};
+    answer.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => answer);
+
+    const result = new Function(
+      "return (" + createSolveActivityScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: true,
+      text: "A. Austria",
+      pressPoint: { x: 458, y: 326 },
+    });
+    expect(result.targetKey).toMatch(/WQCI|A\. Austria/i);
+    expect(answer.click).not.toHaveBeenCalled();
   });
 
   test("refuses a solver click when another element covers the target", () => {

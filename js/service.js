@@ -3489,11 +3489,11 @@ async function completeRewardActivityTab(tabId) {
   let attachedHere = false;
   let interactions = 0;
   try {
-    if (!config?.runtime?.running) return false;
+    if (!isRuntimeActive()) return false;
     const loaded = await wait(tabId, true);
-    if (!loaded || !config?.runtime?.running) return false;
+    if (!loaded || !isRuntimeActive()) return false;
     await delay(mediumDelay, true);
-    if (!config?.runtime?.running) return false;
+    if (!isRuntimeActive()) return false;
 
     const alreadyAttached = await isDebuggerAttached(tabId);
     if (!alreadyAttached) {
@@ -3522,7 +3522,22 @@ async function completeRewardActivityTab(tabId) {
         return null;
       });
       const value = result?.result?.value;
-      if (!value?.clicked) break;
+      if (!value?.clicked) {
+        // A Bing search activity needs one preparatory scroll before its quiz
+        // controls are discoverable. That step deliberately has no press point;
+        // give the page another solver pass instead of misreporting a stale
+        // click target and abandoning both Daily Set and Keep earning quizzes.
+        if (value?.retry) {
+          logs &&
+            log(
+              `[ACTIVITY] Reward tab ${tabId}: ${value.text || value.reason || "waiting for controls"}.`,
+              "update",
+            );
+          await delay(600 + Math.random() * 400, true);
+          continue;
+        }
+        break;
+      }
       const freshPoint = await refreshSolvePressPoint(tabId, value.targetKey);
       if (
         !value.pressPoint ||
@@ -3540,9 +3555,9 @@ async function completeRewardActivityTab(tabId) {
       interactions++;
       logs &&
         log(`[ACTIVITY] Reward tab ${tabId} clicked: ${value.text}`, "update");
-      if (!config?.runtime?.running) break;
+      if (!isRuntimeActive()) break;
       await delay(1200 + Math.random() * 800, true);
-      if (!config?.runtime?.running) break;
+      if (!isRuntimeActive()) break;
       await wait(tabId, true);
     }
   } catch (error) {

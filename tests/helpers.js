@@ -64,6 +64,7 @@ function clickTargetFor(el) {
 // ── Priority scoring (mirrors the solve script logic) ────────────────────────
 const PRIORITY_SELECTORS = [
   'input[type="radio"]:not(:checked)',
+  'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
   "[data-option-index]",
   '[data-testid*="answer" i]',
   '[data-testid*="option" i]',
@@ -97,7 +98,10 @@ function scoreCandidate(candidate, priority) {
   if (/option|answer|choice|quiz|poll|rq|wk_|bt_/i.test(className)) score -= 10;
   if (
     candidate.hasAttribute("data-option-index") ||
-    /answer|option/i.test(candidate.getAttribute("data-testid") || "")
+    /answer|option/i.test(candidate.getAttribute("data-testid") || "") ||
+    candidate.matches(
+      'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
+    )
   )
     score -= 10;
   return score;

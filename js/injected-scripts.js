@@ -900,6 +900,7 @@ export function createSolveActivityScript(deferToCdp = false) {
 					el;
 				const prioritySelectors = [
 					'input[type="radio"]:not(:checked)',
+					'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
 					'[data-option-index]',
 					'[data-testid*="answer" i]',
 					'[data-testid*="option" i]',
@@ -924,7 +925,11 @@ export function createSolveActivityScript(deferToCdp = false) {
 						behavior: 'smooth'
 					});
 					return {
-						clicked: true,
+						// Scrolling is preparation, not a click. The service worker used
+						// to treat this as a trusted-click candidate, require a missing
+						// targetKey/pressPoint, and abort before the quiz answers rendered.
+						clicked: false,
+						retry: true,
 						text: 'viewed Bing search results',
 						url: location.href
 					};
@@ -949,11 +954,12 @@ export function createSolveActivityScript(deferToCdp = false) {
 						const isUsefulText = text.length > 0 && text.length < 160 && !rejectText.test(text);
 						const isPlainRewardButton = rewardPage && target.tagName === 'BUTTON' && isUsefulText && preferText.test(text);
 						const isDataOption = candidate.hasAttribute('data-option-index') || /answer|option/i.test(candidate.getAttribute('data-testid') || '');
-						if (!hasRadio && !hasRewardClass && !preferText.test(text) && !isPlainRewardButton && !isDataOption) continue;
+						const isBingQuizAnswer = candidate.matches('a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]');
+						if (!hasRadio && !hasRewardClass && !preferText.test(text) && !isPlainRewardButton && !isDataOption && !isBingQuizAnswer) continue;
 						if (rejectText.test(text)) continue;
 						let score = pri * 10;
 						if (preferText.test(text)) score -= 15;
-						if (hasRadio || hasRewardClass || isDataOption) score -= 10;
+						if (hasRadio || hasRewardClass || isDataOption || isBingQuizAnswer) score -= 10;
 						scored.push({ target, text, score });
 					}
 				}
@@ -967,6 +973,7 @@ export function createSolveActivityScript(deferToCdp = false) {
 						target.getAttribute?.('title'),
 						target.getAttribute?.('name'),
 						target.value,
+						target.href,
 						text
 					].filter(Boolean).join('|')).toLowerCase();
 					const htmlStyle = document.documentElement.style.scrollBehavior;

@@ -564,6 +564,11 @@ describe("service regressions", () => {
     expect(serviceSource).toContain("refreshClaimPressPoint(");
   });
 
+  test("a preparatory Bing-search scroll receives another solver pass", () => {
+    expect(serviceSource).toContain("if (value?.retry) {");
+    expect(serviceSource).toContain("await delay(600 + Math.random() * 400, true)");
+  });
+
   test("search path does not open organic result links", () => {
     // Visits were a major source of slow + flaky next-search behaviour.
     expect(serviceSource).not.toContain("createResultPickScript");

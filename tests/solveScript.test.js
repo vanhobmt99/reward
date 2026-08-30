@@ -23,6 +23,7 @@ const {
 // ── Priority selector order (must match service.js) ───────────────────────────
 const PRIORITY_SELECTORS = [
   'input[type="radio"]:not(:checked)',
+  'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
   "[data-option-index]",
   '[data-testid*="answer" i]',
   '[data-testid*="option" i]',
@@ -96,20 +97,25 @@ function runSolver(container, { rewardPage = true } = {}) {
       const isDataOption =
         candidate.hasAttribute("data-option-index") ||
         /answer|option/i.test(candidate.getAttribute("data-testid") || "");
+      const isBingQuizAnswer = candidate.matches(
+        'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
+      );
 
       if (
         !hasRadio &&
         !hasRewardClass &&
         !PREFER_TEXT.test(text) &&
         !isPlainRewardButton &&
-        !isDataOption
+        !isDataOption &&
+        !isBingQuizAnswer
       )
         continue;
       if (REJECT_TEXT.test(text)) continue;
 
       let score = pri * 10;
       if (PREFER_TEXT.test(text)) score -= 15;
-      if (hasRadio || hasRewardClass || isDataOption) score -= 10;
+      if (hasRadio || hasRewardClass || isDataOption || isBingQuizAnswer)
+        score -= 10;
 
       scored.push({ candidate, target, text, score });
     }
@@ -237,6 +243,28 @@ describe("solve script — text filtering", () => {
     const results = runSolver(c);
     expect(results.length).toBeGreaterThan(0);
     expect(results[0].text).toBe("Start quiz");
+  });
+
+  test("includes Bing quiz answer links but ignores ordinary search links", () => {
+    const organic = document.createElement("a");
+    organic.href = "https://example.com/article";
+    organic.textContent = "Croissant history";
+    mockVisible(organic);
+
+    const answer = document.createElement("a");
+    answer.href =
+      "/search?q=Austria&filters=WQId%3A%221%22+WQCI%3A%220%22&FORM=BTJQOD";
+    answer.className = "acf-button-standard__link";
+    answer.textContent = "A. Austria";
+    mockVisible(answer);
+
+    c.appendChild(organic);
+    c.appendChild(answer);
+
+    const results = runSolver(c);
+    expect(results).toHaveLength(1);
+    expect(results[0].candidate).toBe(answer);
+    expect(results[0].text).toBe("A. Austria");
   });
 });
 
