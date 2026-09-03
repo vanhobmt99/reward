@@ -104,6 +104,19 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 					el.getAttribute('aria-hidden') !== 'true';
 			};
 			const interactiveSelector = 'a[href], button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
+			// Rewards cards are responsive.  On a narrow window, at non-100% zoom,
+			// or in a two-column layout, a perfectly valid card can span almost the
+			// whole viewport.  Do not use a fixed desktop-width ceiling to decide
+			// whether an ancestor is a card: that made the same card disappear on a
+			// second machine with a different viewport.  Page-level containers are
+			// rejected separately below.
+			const isCardSized = (rect) => {
+				const viewportWidth = Math.max(window.innerWidth || 0, 1);
+				const viewportHeight = Math.max(window.innerHeight || 0, 1);
+				return rect.width >= 96 && rect.height >= 40 &&
+					rect.width <= viewportWidth + 2 &&
+					rect.height <= Math.max(viewportHeight * 1.5, 720);
+			};
 			const actionTargetFor = (node) => {
 				const card = nearestCard(node);
 				const candidates = [
@@ -146,20 +159,17 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 			const nearestCard = (node) => {
 				const candidates = [];
 				let current = node;
-				for (let i = 0; current && current !== document.body && i < 8; i++) {
+				for (let i = 0; current && current !== document.body && i < 12; i++) {
 					if (isVisible(current)) {
 						const rect = current.getBoundingClientRect();
 						const text = textOf(current);
 						const className = String(current.className || '');
 						const testId = String(current.getAttribute?.('data-testid') || '');
 						const looksLikeCard = /card|tile|offer|activity|${cardKeyword}|mee|ctrl|pointer|group/i.test(className + ' ' + testId);
-						const hasCardSize = rect.width >= 120 && rect.height >= 48;
-						const maxCardWidth = Math.max(360, Math.min(window.innerWidth * 0.88, 760));
-						const maxCardHeight = Math.max(180, window.innerHeight * 0.5);
 						const tagName = String(current.tagName || '').toLowerCase();
 						const broadContainer = /^(main|section|footer|header|nav)$/i.test(tagName) ||
-							(rect.width > maxCardWidth && rect.height > 220);
-						if (hasCardSize && !broadContainer && rect.width <= maxCardWidth && rect.height <= maxCardHeight && text.length >= 8 && text.length <= ${maxCardTextLength} && (looksLikeCard || current.querySelector?.(interactiveSelector))) {
+							(rect.width >= Math.max((window.innerWidth || 0) - 2, 1) && rect.height > Math.max((window.innerHeight || 0) * 0.72, 420));
+						if (isCardSized(rect) && !broadContainer && text.length >= 8 && text.length <= ${maxCardTextLength} && (looksLikeCard || current.querySelector?.(interactiveSelector))) {
 							candidates.push(current);
 						}
 					}
@@ -185,8 +195,17 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				const onscreen = visibleRight > visibleLeft && visibleBottom > visibleTop;
 				const centerX = onscreen ? (visibleLeft + visibleRight) / 2 : (rect.left + rect.right) / 2;
 				const centerY = onscreen ? (visibleTop + visibleBottom) / 2 : (rect.top + rect.bottom) / 2;
+				// A card's centre is frequently occupied by a badge, image, or a
+				// transient React layer.  Re-evaluate a small grid on every click,
+				// rather than assuming one centre coordinate works at every window
+				// size and display scale.  All values come from getBoundingClientRect(),
+				// so they remain CSS-viewport coordinates for CDP's Input domain.
 				const points = onscreen ? [
 					[centerX, centerY],
+					[visibleLeft + (visibleRight - visibleLeft) * 0.2, visibleTop + (visibleBottom - visibleTop) * 0.2],
+					[visibleLeft + (visibleRight - visibleLeft) * 0.8, visibleTop + (visibleBottom - visibleTop) * 0.2],
+					[visibleLeft + (visibleRight - visibleLeft) * 0.2, visibleTop + (visibleBottom - visibleTop) * 0.8],
+					[visibleLeft + (visibleRight - visibleLeft) * 0.8, visibleTop + (visibleBottom - visibleTop) * 0.8],
 					[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
 					[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
 					[centerX, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],

@@ -94,6 +94,51 @@ describe("createDashboardActivityScript", () => {
     expect(card.click).not.toHaveBeenCalled();
   });
 
+  test("finds a full-width responsive card and recalculates its nested button position", () => {
+    const originalInnerWidth = window.innerWidth;
+    Object.defineProperty(window, "innerWidth", {
+      value: 400,
+      configurable: true,
+    });
+    try {
+      document.body.innerHTML = `
+        <main>
+          <h2>Daily set</h2>
+          <div class="activity-shell"><span>+10</span><button>Start quiz</button></div>
+          <h2>Your activity</h2>
+        </main>`;
+      const [heading, nextHeading] = document.querySelectorAll("h2");
+      const card = document.querySelector(".activity-shell");
+      const button = document.querySelector("button");
+      heading.getBoundingClientRect = () => ({
+        width: 200, height: 30, top: 10, bottom: 40, left: 0, right: 200,
+      });
+      card.getBoundingClientRect = () => ({
+        width: 396, height: 110, top: 55, bottom: 165, left: 2, right: 398,
+      });
+      button.getBoundingClientRect = () => ({
+        width: 120, height: 40, top: 105, bottom: 145, left: 140, right: 260,
+      });
+      nextHeading.getBoundingClientRect = () => ({
+        width: 200, height: 30, top: 190, bottom: 220, left: 0, right: 200,
+      });
+      button.scrollIntoView = () => {};
+      document.elementFromPoint = jest.fn(() => button);
+
+      const result = new Function(
+        "return (" + createDashboardActivityScript([], 1, true) + ")",
+      )();
+
+      expect(result.clicked).toHaveLength(1);
+      expect(result.pressPoint).toEqual({ x: 200, y: 125 });
+    } finally {
+      Object.defineProperty(window, "innerWidth", {
+        value: originalInnerWidth,
+        configurable: true,
+      });
+    }
+  });
+
   test("does not claim a Daily Set click when an overlay covers the card", () => {
     document.body.innerHTML = `
       <main>
