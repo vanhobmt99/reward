@@ -344,7 +344,7 @@ export function createDashboardActivityScript(
 			const deferToCdp = ${Boolean(deferToCdp)};
 			const safetyLimit = ${Number(safetyLimit) || 12};
 ${activityDomHelpers("daily", 520)}
-			const dailySetPattern = /daily set|daily check.?in|today'?s? set|bộ hàng ngày|chuỗi hàng ngày|nhiệm vụ hàng ngày|phần thưởng hàng ngày/i;
+			const dailySetPattern = /daily set|daily check.?in|today'?s? (set|tasks?|activities)|bộ hàng ngày|chuỗi hàng ngày|nhiệm vụ hàng ngày|nhiệm vụ hôm nay|phần thưởng hàng ngày|hoạt động hôm nay|bộ nhiệm vụ/i;
 			const nextSectionPattern = /your activity|more activities|punch cards?|recommended|quests?|activities|keep earning|hoạt động khác|kiếm thêm/i;
 			const doneIconSelector = 'svg[data-icon="checkmark"], svg[class*="check"], [data-icon="completed"], [class*="mee-completed"]';
 			const isDone = (el) => {
@@ -383,13 +383,23 @@ ${activityDomHelpers("daily", 520)}
 				)
 				.sort((a, b) => a.rect.top - b.rect.top);
 			const semanticHeadings = headingNodes.filter((item) => item.semantic);
-			const dailyHeading =
+			let dailyHeading =
 				semanticHeadings.find((item) => dailySetPattern.test(item.text)) ||
 				headingNodes
 					.filter((item) => item.text.length <= 90 && dailySetPattern.test(item.text))
 					.sort((a, b) =>
 						(a.rect.width * a.rect.height) - (b.rect.width * b.rect.height)
 					)[0];
+			const dailySetRoot = document.querySelector('#dailyset, [id*="dailyset" i], [data-bi-area*="DailySet" i], [data-bi-id*="dailyset" i]');
+			if (!dailyHeading && dailySetRoot && hasLayout(dailySetRoot)) {
+				const rootHeading = dailySetRoot.querySelector('h1, h2, h3, h4, [role="heading"]') || dailySetRoot;
+				dailyHeading = {
+					el: rootHeading,
+					text: textOf(rootHeading) || 'Daily set',
+					rect: rootHeading.getBoundingClientRect(),
+					semantic: true
+				};
+			}
 			if (!dailyHeading) {
 				const doc = document.documentElement;
 				const maxScroll = Math.max(
@@ -412,18 +422,12 @@ ${activityDomHelpers("daily", 520)}
 						url: location.href
 					};
 				}
-				return {
-					clicked,
-					skipped,
-					openedKeys,
-					reason: 'daily set heading not found',
-					url: location.href
-				};
 			}
+			const unboundedDailySet = !dailyHeading;
 			// Section boundaries must be real headings. Generic div/span text often
 			// contains "activities" inside the first Daily Set card and previously
 			// truncated the region before that card, producing a silent click miss.
-			const nextHeading = semanticHeadings.find((item) =>
+			const nextHeading = unboundedDailySet ? null : semanticHeadings.find((item) =>
 				item.rect.top > dailyHeading.rect.bottom + 4 &&
 				nextSectionPattern.test(item.text)
 			);
@@ -433,7 +437,9 @@ ${activityDomHelpers("daily", 520)}
 			// Daily set (its lower cards were never clicked) and, on a short one,
 			// swallowed the following section's cards. Only trust the <section> when
 			// it does not also contain the NEXT section's heading.
-			const dailySection = dailyHeading.el.closest?.('section');
+			const dailySection = unboundedDailySet ?
+				null :
+				(dailySetRoot?.closest?.('section') || dailyHeading.el.closest?.('section') || dailySetRoot);
 			const sectionIsExclusive = Boolean(dailySection) && !semanticHeadings.some((item) =>
 				item.el !== dailyHeading.el &&
 				dailySection.contains(item.el) &&
@@ -444,18 +450,24 @@ ${activityDomHelpers("daily", 520)}
 			// recovery, so fall back to the heading geometry in that case.
 			const rawSectionRect = sectionIsExclusive ? dailySection.getBoundingClientRect() : null;
 			const sectionRect = rawSectionRect && rawSectionRect.height > 0 ? rawSectionRect : null;
-			const dailyTop = sectionRect ? sectionRect.top : dailyHeading.rect.bottom - 8;
-			const dailyBottom = sectionRect ?
-				sectionRect.bottom :
-				(nextHeading ?
-					nextHeading.rect.top - 8 :
-					dailyHeading.rect.bottom + Math.max(260, window.innerHeight * 0.5));
-			const isInsideDailySet = sectionRect ?
-				(el) => dailySection.contains(el) :
-				(el) => {
-					const rect = el.getBoundingClientRect();
-					return rect.bottom >= dailyTop && rect.top < dailyBottom;
-				};
+			const dailyTop = unboundedDailySet ?
+				0 :
+				(sectionRect ? sectionRect.top : dailyHeading.rect.bottom - 8);
+			const dailyBottom = unboundedDailySet ?
+				Number.POSITIVE_INFINITY :
+				(sectionRect ?
+					sectionRect.bottom :
+					(nextHeading ?
+						nextHeading.rect.top - 8 :
+						dailyHeading.rect.bottom + Math.max(260, window.innerHeight * 0.5)));
+			const isInsideDailySet = unboundedDailySet ?
+				() => true :
+				(sectionRect ?
+					(el) => dailySection.contains(el) :
+					(el) => {
+						const rect = el.getBoundingClientRect();
+						return rect.bottom >= dailyTop && rect.top < dailyBottom;
+					});
 			const pointPattern = /\\+\\s*\\d+|\\d+\\s*(points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
 			const activityTextPattern = /quiz|poll|play|watch|explore|search now|complete|claim|check.?in|view|start|earn|trắc nghiệm|thăm dò|câu hỏi|chơi|xem|khám phá|bắt đầu|kiếm|nhận/i;
@@ -524,9 +536,11 @@ ${activityDomHelpers("daily", 520)}
 			// fully on screen reports zero and, without a scroll, never gets
 			// another look — the Daily set silently never gets clicked.
 			if (clicked.length === 0) {
-				const loadingRoot = (sectionIsExclusive && dailySection) ?
-					dailySection :
-					dailyHeading.el.closest?.('section');
+				const loadingRoot = unboundedDailySet ?
+					mainRoot :
+					((sectionIsExclusive && dailySection) ?
+						dailySection :
+						dailyHeading.el.closest?.('section'));
 				// Visible heading + pulse grid is the Suspense fallback. Without a
 				// retry the activity loop treats 3 empty passes as "Daily set idle"
 				// and leaves for Keep earning before the cards hydrate.
@@ -603,6 +617,9 @@ ${activityDomHelpers("daily", 520)}
 				skipped,
 				openedKeys,
 				pressPoint,
+				reason: unboundedDailySet && clicked.length === 0 ?
+					'daily set heading not found; scanned whole page' :
+					undefined,
 				url: location.href
 			};
 		})()
@@ -670,10 +687,10 @@ ${activityDomHelpers("earn", 560)}
 				}))
 				.filter((item) => item.text.length > 0 && item.text.length < 160)
 				.sort((a, b) => a.rect.top - b.rect.top);
-			const keepHeadingPattern = /keep earning|more activities|more points|earn more|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm/i;
+			const keepHeadingPattern = /keep earning|more activities|more points|earn more|^earn$|quests?|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm|^kiếm điểm$|thêm hoạt động|nhiệm vụ khác/i;
 			// Prefer a real heading so the "Earn more" CTA span on the Daily set
 			// page cannot steal the Keep earning anchor.
-			const keepHeading =
+			let keepHeading =
 				markerNodes.find((item) => item.semantic && item.text.length <= 48 && keepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.text.length <= 48 && keepHeadingPattern.test(item.text));
 			if (!keepHeading) {
@@ -689,20 +706,19 @@ ${activityDomHelpers("earn", 560)}
 						left: 0,
 						behavior: 'instant'
 					});
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						retry: true,
+						reason: 'scrolled while looking for Keep earning',
+						url: location.href
+					};
 				}
-				return {
-					clicked,
-					skipped,
-					openedKeys,
-					pressPoint,
-					retry: canScroll,
-					reason: canScroll ?
-						'scrolled while looking for Keep earning' :
-						'keep earning heading not found',
-					url: location.href
-				};
 			}
-			const nextHeading = markerNodes.find((item) =>
+			const unboundedEarn = !keepHeading;
+			const nextHeading = unboundedEarn ? null : markerNodes.find((item) =>
 				item.rect.top > keepHeading.rect.bottom + 4 &&
 				item.semantic &&
 				!keepHeadingPattern.test(item.text)
@@ -710,7 +726,7 @@ ${activityDomHelpers("earn", 560)}
 			// Same exclusive-<section> rule as Daily set. Geometric
 			// heading→next-heading bounds truncated a tall Keep earning grid
 			// and, on a short one, swallowed the following section.
-			const keepSection = keepHeading.el.closest?.('section');
+			const keepSection = unboundedEarn ? null : keepHeading.el.closest?.('section');
 			const sectionIsExclusive = Boolean(keepSection) && !markerNodes.some((item) =>
 				item.semantic &&
 				item.el !== keepHeading.el &&
@@ -719,16 +735,20 @@ ${activityDomHelpers("earn", 560)}
 			);
 			const rawSectionRect = sectionIsExclusive ? keepSection.getBoundingClientRect() : null;
 			const sectionRect = rawSectionRect && rawSectionRect.height > 0 ? rawSectionRect : null;
-			const keepTop = sectionRect ? sectionRect.top : keepHeading.rect.bottom - 8;
-			const earnBottom = sectionRect ?
-				sectionRect.bottom :
+			const keepTop = unboundedEarn ?
+				0 :
+				(sectionRect ? sectionRect.top : keepHeading.rect.bottom - 8);
+			const earnBottom = unboundedEarn || sectionRect ?
+				(unboundedEarn ? Number.POSITIVE_INFINITY : sectionRect.bottom) :
 				(nextHeading ? nextHeading.rect.top - 8 : Number.POSITIVE_INFINITY);
-			const isInsideEarnArea = sectionRect ?
-				(el) => keepSection.contains(el) :
-				(el) => {
-					const rect = el.getBoundingClientRect();
-					return rect.bottom >= keepTop && rect.top < earnBottom;
-				};
+			const isInsideEarnArea = unboundedEarn ?
+				() => true :
+				(sectionRect ?
+					(el) => keepSection.contains(el) :
+					(el) => {
+						const rect = el.getBoundingClientRect();
+						return rect.bottom >= keepTop && rect.top < earnBottom;
+					});
 			const nonCardPattern = /privacy|terms|dashboard only|no points|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback/i;
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
 			const activityTextPattern = /quiz|poll|play|watch|explore|search now|complete|claim|check.?in|view|start|earn|tr\\u1eafc nghi\\u1ec7m|th\\u0103m d\\u00f2|c\\u00e2u h\\u1ecfi|ch\\u01a1i|xem|kh\\u00e1m ph\\u00e1|b\\u1eaft \\u0111\\u1ea7u|ki\\u1ebfm|nh\\u1eadn/i;
@@ -796,9 +816,11 @@ ${activityDomHelpers("earn", 560)}
 			}
 
 			if (clicked.length === 0) {
-				const loadingRoot = (sectionIsExclusive && keepSection) ?
-					keepSection :
-					keepHeading.el.closest?.('section');
+				const loadingRoot = unboundedEarn ?
+					mainRoot :
+					((sectionIsExclusive && keepSection) ?
+						keepSection :
+						keepHeading.el.closest?.('section'));
 				if (loadingRoot?.querySelector?.('[class*="animate-pulse"]')) {
 					return {
 						clicked,
@@ -1024,6 +1046,14 @@ export function createSolveActivityScript(deferToCdp = false) {
 					}
 					target.click();
 					return { clicked: true, text: text.slice(0, 80) || target.tagName, url: location.href };
+				}
+				if (isSearchActivity) {
+					return {
+						clicked: false,
+						completed: true,
+						text: 'viewed Bing search activity',
+						url: location.href
+					};
 				}
 				return { clicked: false, url: location.href };
 			})()

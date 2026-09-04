@@ -70,6 +70,7 @@ import {
   createClaimReadyScript,
   createRewardsSectionReadyProbe,
 } from "/js/injected-scripts.js";
+import { collectPendingOffers } from "/js/activity-offers.js";
 import { createCookieHelpers } from "/js/cookies.js";
 import { installGlobalCrashHandlers, recordCrash } from "/js/crash-logger.js";
 
@@ -246,7 +247,7 @@ function getMaxTouchPoints(device) {
 }
 
 const activityMemoryKey = "activityMemory";
-const maxActivityRunsPerDay = 2;
+const maxActivityRunsPerDay = 6;
 
 function isRuntimeActive() {
   return Boolean(config?.runtime?.running || config?.runtime?.act);
@@ -699,6 +700,9 @@ function limitSearchPlanForToday(searches, options = {}) {
 
 function hasActivityQuota() {
   if (!config?.control?.act) return false;
+  // A user-started run (Search / Làm nhiệm vụ) must still click today's cards
+  // even if a scheduled run already counted against the daily quota.
+  if (ignoreDailyQuota) return true;
   if (config?.runtime?.activityRunDate !== todayKey()) return true;
   return (
     (Number(config?.runtime?.activityRunsToday) || 0) < maxActivityRunsPerDay
@@ -772,13 +776,15 @@ function notifyScheduledRunFinished(succeeded) {
 
 async function checkRewardsApiSession() {
   try {
-    const response = await fetch("https://rewards.bing.com/api/getuserinfo", {
-      cache: "no-store",
-      credentials: "include",
-    });
-    if (!response.ok) return false;
-    const data = await response.json();
-    return Boolean(data?.status?.userStatus);
+    // Keep the session probe on exactly the same API contract as the offer and
+    // score readers.  The bare endpoint is increasingly served a different
+    // payload (or rejected) by the current Rewards UI; that made a valid,
+    // signed-in user look logged out and aborted the activity phase before the
+    // first card scan.
+    const data = await fetchRewardsUserinfo();
+    return Boolean(
+      data?.status?.userStatus || data?.dashboard?.userStatus,
+    );
   } catch {
     return false;
   }
@@ -997,17 +1003,30 @@ async function recordActivityRun(memory = null) {
   config.runtime.activityRunsToday = current.runs;
 }
 
-async function fetchRewardsSnapshot() {
-  try {
-    const response = await fetch("https://rewards.bing.com/api/getuserinfo", {
+async function fetchRewardsUserinfo() {
+  const response = await fetch(
+    "https://rewards.bing.com/api/getuserinfo?type=1",
+    {
       cache: "no-store",
       credentials: "include",
-    });
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-    const data = await response.json();
-    return buildRewardsSnapshot(data?.status?.userStatus || {});
+      headers: {
+        Accept: "application/json",
+        "X-Requested-With": "XMLHttpRequest",
+      },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+  return response.json();
+}
+
+async function fetchRewardsSnapshot() {
+  try {
+    const data = await fetchRewardsUserinfo();
+    return buildRewardsSnapshot(
+      data?.status?.userStatus || data?.dashboard?.userStatus || {},
+    );
   } catch (error) {
     logs &&
       log(
@@ -3536,6 +3555,16 @@ async function completeRewardActivityTab(tabId) {
           await delay(600 + Math.random() * 400, true);
           continue;
         }
+        // Daily Set "search this" cards credit just for opening Bing search.
+        if (value?.completed) {
+          interactions++;
+          logs &&
+            log(
+              `[ACTIVITY] Reward tab ${tabId} completed by viewing: ${value.text || "search activity"}.`,
+              "success",
+            );
+          break;
+        }
         break;
       }
       const freshPoint = await refreshSolvePressPoint(tabId, value.targetKey);
@@ -3593,7 +3622,7 @@ function isActivityOpenedTab(tab, mainTabId, existingTabIds) {
 async function processOpenedActivityTabs(
   mainTabId,
   existingTabIds,
-  returnUrl = rewards + "dashboard",
+  returnUrl = rewards + "earn",
 ) {
   const allTabs = await chrome.tabs.query({});
   const newTabs = allTabs.filter((tab) =>
@@ -3826,10 +3855,101 @@ async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
   return false;
 }
 
+async function runApiOfferPass(
+  tabId,
+  memory,
+  sessionVisited,
+  sessionMisses,
+) {
+  let data = null;
+  try {
+    data = await fetchRewardsUserinfo();
+  } catch (error) {
+    logs &&
+      log(
+        `[ACTIVITY] Could not list Rewards offers: ${error.message}`,
+        "warning",
+      );
+    return 0;
+  }
+
+  const offers = collectPendingOffers(data).filter((offer) => offer.url);
+  logs &&
+    log(
+      `[ACTIVITY] API listed ${offers.length} pending offer(s).`,
+      offers.length > 0 ? "update" : "warning",
+    );
+  if (offers.length === 0) return 0;
+
+  let processed = 0;
+  for (const offer of offers) {
+    if (!isRuntimeActive()) break;
+    if (sessionVisited.has(offer.key)) continue;
+    logs &&
+      log(
+        `[ACTIVITY] Opening ${offer.category}: ${offer.title || offer.url}`,
+        "update",
+      );
+    let offerTabId = null;
+    try {
+      const offerTab = await chrome.tabs.create({
+        url: offer.url,
+        active: true,
+        openerTabId: tabId,
+      });
+      offerTabId = Number(offerTab.id);
+      const completed = await completeRewardActivityTab(offerTabId);
+      const ok = completed || offer.visitCompletes;
+      if (ok) {
+        processed++;
+        confirmActivityKeys(
+          memory,
+          sessionVisited,
+          sessionMisses,
+          [offer.key],
+        );
+        logs &&
+          log(
+            `[ACTIVITY] Completed ${offer.category}: ${offer.title || offer.url}`,
+            "success",
+          );
+      } else {
+        markUnconfirmedActivityKeys(
+          [offer.key],
+          sessionVisited,
+          sessionMisses,
+          undefined,
+          memory,
+        );
+        logs &&
+          log(
+            `[ACTIVITY] Did not finish ${offer.title || offer.url}`,
+            "warning",
+          );
+      }
+    } catch (error) {
+      logs &&
+        log(
+          `[ACTIVITY] Offer failed (${offer.title || offer.url}): ${error.message}`,
+          "warning",
+        );
+    } finally {
+      if (offerTabId) {
+        try {
+          await chrome.tabs.remove(offerTabId);
+        } catch (error) {}
+      }
+    }
+    await delay(shortestDelay, false);
+  }
+  await saveActivityMemory(memory);
+  return processed;
+}
+
 const DAILY_SET_HEADING_PATTERN =
-  "daily set|daily check.?in|today'?s? set|bộ hàng ngày|chuỗi hàng ngày|nhiệm vụ hàng ngày|phần thưởng hàng ngày";
+  "daily set|daily check.?in|today'?s? (set|tasks?|activities)|bộ hàng ngày|chuỗi hàng ngày|nhiệm vụ hàng ngày|nhiệm vụ hôm nay|phần thưởng hàng ngày|hoạt động hôm nay|bộ nhiệm vụ";
 const KEEP_EARNING_HEADING_PATTERN =
-  "keep earning|more activities|more points|earn more|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm";
+  "keep earning|more activities|more points|earn more|^earn$|quests?|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm|^kiếm điểm$|thêm hoạt động|nhiệm vụ khác";
 
 async function runDashboardActivityPass(
   tabId,
@@ -3922,7 +4042,7 @@ async function runDashboardActivityPass(
   const nonExpandClicks = clickedItems.filter((item) => item.type !== "expand");
   if (nonExpandClicks.length > 0 || processedTabs > 0) {
     await chrome.tabs.update(tabId, {
-      url: rewards + "dashboard",
+      url: rewards + "earn",
       active: true,
     });
     await wait(tabId);
@@ -4311,7 +4431,7 @@ async function activity(tabId, interruptible = true, options = {}) {
     await chrome.action.setBadgeBackgroundColor({ color: "#0072FF" });
 
     await chrome.tabs.update(tabId, {
-      url: rewards + "dashboard",
+      url: rewards + "earn",
       active: true,
     });
     await wait(tabId);
@@ -4321,11 +4441,11 @@ async function activity(tabId, interruptible = true, options = {}) {
     if (!rewardsSessionOk) {
       logs &&
         log(
-          `[ACTIVITY] Rewards session not detected; reloading dashboard once...`,
+          `[ACTIVITY] Rewards session not detected; reloading earn page once...`,
           "warning",
         );
       await chrome.tabs.update(tabId, {
-        url: rewards + "dashboard",
+        url: rewards + "earn",
         active: true,
       });
       await wait(tabId);
@@ -4381,6 +4501,33 @@ async function activity(tabId, interruptible = true, options = {}) {
       let measuredDelta = 0;
       let idlePasses = 0;
       const sessionMisses = new Map();
+
+      if (debuggerReady) {
+        try {
+          const apiProcessed = await runApiOfferPass(
+            tabId,
+            activityMemory,
+            sessionVisited,
+            sessionMisses,
+          );
+          if (apiProcessed > 0) {
+            totalProcessed += apiProcessed;
+            meaningfulActivityRun = true;
+            clicked = true;
+            logs &&
+              log(
+                `[ACTIVITY] API offers completed: ${apiProcessed}.`,
+                "success",
+              );
+          }
+        } catch (apiError) {
+          logs &&
+            log(
+              `[ACTIVITY] API offer pass error: ${apiError.message}`,
+              "warning",
+            );
+        }
+      }
 
       if (debuggerReady) {
         for (let pass = 1; pass <= 35; pass++) {
@@ -5201,7 +5348,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let activityTab = null;
         try {
           activityTab = await chrome.tabs.create({
-            url: rewards + "dashboard",
+            url: rewards + "earn",
             active: true,
           });
           await wait(activityTab.id);

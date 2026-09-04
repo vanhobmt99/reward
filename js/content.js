@@ -182,7 +182,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               `${href} ${text.slice(0, 1200)}`,
             );
           const hasRewardsUi =
-            /daily set|bộ hàng ngày|keep earning|kiếm thêm|microsoft rewards|điểm thưởng|rewards dashboard/.test(
+            /daily set|bộ hàng ngày|keep earning|kiếm thêm|microsoft rewards|điểm thưởng|rewards dashboard|nhiệm vụ hôm nay|kiếm điểm/.test(
               text,
             );
           const onRewardsHost = /rewards\.bing\.com/.test(href);
@@ -194,9 +194,21 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
         }
 
         case "closePopups": {
-          const close = document.querySelector(SELECTORS.dashboardPopupClose);
-          if (close) {
-            close.click();
+          const closeSelectors = [
+            SELECTORS.dashboardPopupClose,
+            'button[aria-label*="close" i]',
+            'button[aria-label*="dismiss" i]',
+            'button[aria-label*="đóng" i]',
+            '[role="dialog"] button[aria-label*="close" i]',
+            '[data-testid*="close" i]',
+            ".ms-Dialog-button--close",
+          ];
+          for (const selector of closeSelectors) {
+            const close = document.querySelector(selector);
+            if (close) {
+              close.click();
+              break;
+            }
           }
           sendResponse({ success: true });
           break;

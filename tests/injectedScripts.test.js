@@ -655,6 +655,41 @@ describe("createDashboardActivityScript", () => {
     expect(card.click).toHaveBeenCalled();
     expect(about.click).not.toHaveBeenCalled();
   });
+
+  test("clicks a point card when the Daily set heading is missing", () => {
+    document.body.innerHTML = `
+      <main>
+        <a class="group/ctrl cursor-pointer" href="https://www.bing.com/search?q=Usain+Bolt+quiz&form=dsetqu">
+          <p>Fastest Ever?</p>
+          <p>Test your knowledge of Usain Bolt.</p>
+          <div class="rounded-cornerCircular bg-statusSuccessRewardsBg"><p>10</p></div>
+        </a>
+      </main>`;
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      value: window.innerHeight,
+      configurable: true,
+    });
+    const card = document.querySelector("a");
+    card.getBoundingClientRect = () => ({
+      width: 320,
+      height: 140,
+      top: 70,
+      bottom: 210,
+      left: 20,
+      right: 340,
+    });
+    card.scrollIntoView = () => {};
+    document.elementFromPoint = jest.fn(() => card);
+    card.click = jest.fn();
+
+    const result = new Function(
+      "return (" + createDashboardActivityScript([], 1) + ")",
+    )();
+
+    expect(result.clicked).toHaveLength(1);
+    expect(result.clicked[0].type).toBe("daily-set");
+    expect(card.click).toHaveBeenCalled();
+  });
 });
 
 describe("createRewardsSectionReadyProbe", () => {
@@ -811,6 +846,37 @@ describe("createEarnActivityScript", () => {
 
     expect(result.reason).toBeUndefined();
     expect(result.clicked).toHaveLength(1);
+    expect(card.click).toHaveBeenCalled();
+  });
+
+  test("clicks a Keep-earning point card when the heading is missing", () => {
+    document.body.innerHTML = `
+      <main>
+        <a class="earn-card" href="https://rewards.bing.com/quiz">+10 Start quiz</a>
+      </main>`;
+    Object.defineProperty(document.documentElement, "scrollHeight", {
+      value: window.innerHeight,
+      configurable: true,
+    });
+    const card = document.querySelector("a");
+    card.getBoundingClientRect = () => ({
+      width: 220,
+      height: 70,
+      top: 60,
+      bottom: 130,
+      left: 20,
+      right: 240,
+    });
+    card.scrollIntoView = () => {};
+    document.elementFromPoint = jest.fn(() => card);
+    card.click = jest.fn();
+
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 3) + ")",
+    )();
+
+    expect(result.clicked).toHaveLength(1);
+    expect(result.clicked[0].type).toBe("keep-earning");
     expect(card.click).toHaveBeenCalled();
   });
 
@@ -1017,6 +1083,21 @@ describe("createSolveActivityScript", () => {
     expect(result.pressPoint).toBeUndefined();
     expect(result.targetKey).toBeUndefined();
     expect(window.scrollBy).toHaveBeenCalled();
+  });
+
+  test("treats a viewed Bing search page with no quiz as complete", () => {
+    document.body.innerHTML = `<main><h1>Search results</h1></main>`;
+    sessionStorage.setItem("rsaSearchActivityViewed", "1");
+
+    const result = new Function(
+      "return (" + createSolveActivityScript(true) + ")",
+    )();
+
+    expect(result).toMatchObject({
+      clicked: false,
+      completed: true,
+      text: "viewed Bing search activity",
+    });
   });
 
   test("returns a trusted press point without synthetic click", () => {

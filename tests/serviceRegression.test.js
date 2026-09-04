@@ -567,6 +567,23 @@ describe("service regressions", () => {
   test("a preparatory Bing-search scroll receives another solver pass", () => {
     expect(serviceSource).toContain("if (value?.retry) {");
     expect(serviceSource).toContain("await delay(600 + Math.random() * 400, true)");
+    expect(serviceSource).toContain("value?.completed");
+  });
+
+  test("post-search activities open the 2026 earn surface and API offers", () => {
+    expect(serviceSource).toContain('url: rewards + "earn"');
+    expect(serviceSource).toContain("runApiOfferPass(");
+    expect(serviceSource).toContain("collectPendingOffers");
+  });
+
+  test("Rewards session probe shares the current offer API contract", () => {
+    const sessionProbe = serviceSource.match(
+      /async function checkRewardsApiSession\(\) \{[\s\S]*?\n\}/,
+    )?.[0];
+
+    expect(sessionProbe).toContain("await fetchRewardsUserinfo()");
+    expect(sessionProbe).toContain("data?.dashboard?.userStatus");
+    expect(sessionProbe).not.toContain('fetch("https://rewards.bing.com/api/getuserinfo"');
   });
 
   test("search path does not open organic result links", () => {

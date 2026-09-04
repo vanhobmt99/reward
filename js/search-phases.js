@@ -372,7 +372,7 @@ export async function handlePostSearchTasks(
       try {
         log(`[POST_SEARCH] - Creating a clean tab for activities...`, "update");
         const activityTab = await createTabFn({
-          url: rewards + "dashboard",
+          url: rewards + "earn",
           active: true,
         });
         const activityTabId = Number(activityTab.id);
