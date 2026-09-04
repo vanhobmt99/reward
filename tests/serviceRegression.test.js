@@ -570,7 +570,8 @@ describe("service regressions", () => {
     expect(serviceSource).toContain("value?.completed");
   });
 
-  test("post-search activities open the 2026 earn surface and API offers", () => {
+  test("post-search activities start on Dashboard for Daily Set, then use Earn", () => {
+    expect(serviceSource).toContain('url: rewards + "dashboard"');
     expect(serviceSource).toContain('url: rewards + "earn"');
     expect(serviceSource).toContain("runApiOfferPass(");
     expect(serviceSource).toContain("collectPendingOffers");
@@ -584,6 +585,20 @@ describe("service regressions", () => {
     expect(sessionProbe).toContain("await fetchRewardsUserinfo()");
     expect(sessionProbe).toContain("data?.dashboard?.userStatus");
     expect(sessionProbe).not.toContain('fetch("https://rewards.bing.com/api/getuserinfo"');
+  });
+
+  test("an unverified Rewards probe only blocks a real Microsoft sign-in redirect", () => {
+    const activityStart = serviceSource.indexOf("async function activity(");
+    const activityEnd = serviceSource.indexOf("async function initialise(", activityStart);
+    const activitySource = serviceSource.slice(activityStart, activityEnd);
+
+    expect(serviceSource).toContain("function isMicrosoftSignInUrl(url)");
+    expect(activitySource).toContain(
+      "sessionFailed = isMicrosoftSignInUrl(activityUrl);",
+    );
+    expect(activitySource).toContain(
+      "Rewards session could not be confirmed; continuing with guarded card scan.",
+    );
   });
 
   test("search path does not open organic result links", () => {

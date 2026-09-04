@@ -372,7 +372,9 @@ export async function handlePostSearchTasks(
       try {
         log(`[POST_SEARCH] - Creating a clean tab for activities...`, "update");
         const activityTab = await createTabFn({
-          url: rewards + "earn",
+          // Daily Set cards live on the Dashboard. The activity engine moves
+          // to /earn itself after this pass for Keep earning cards.
+          url: rewards + "dashboard",
           active: true,
         });
         const activityTabId = Number(activityTab.id);

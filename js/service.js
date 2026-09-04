@@ -806,6 +806,12 @@ async function checkRewardsTabSession(tabId) {
   }
 }
 
+function isMicrosoftSignInUrl(url) {
+  return /^https:\/\/(?:login\.live\.com|login\.microsoftonline\.com)\//i.test(
+    String(url || ""),
+  );
+}
+
 async function isRewardsSessionActive(tabId = null) {
   if (await checkRewardsApiSession()) return true;
   if (tabId && (await checkRewardsTabSession(tabId))) return true;
@@ -3622,7 +3628,7 @@ function isActivityOpenedTab(tab, mainTabId, existingTabIds) {
 async function processOpenedActivityTabs(
   mainTabId,
   existingTabIds,
-  returnUrl = rewards + "earn",
+  returnUrl = rewards + "dashboard",
 ) {
   const allTabs = await chrome.tabs.query({});
   const newTabs = allTabs.filter((tab) =>
@@ -4042,7 +4048,7 @@ async function runDashboardActivityPass(
   const nonExpandClicks = clickedItems.filter((item) => item.type !== "expand");
   if (nonExpandClicks.length > 0 || processedTabs > 0) {
     await chrome.tabs.update(tabId, {
-      url: rewards + "earn",
+      url: rewards + "dashboard",
       active: true,
     });
     await wait(tabId);
@@ -4431,7 +4437,7 @@ async function activity(tabId, interruptible = true, options = {}) {
     await chrome.action.setBadgeBackgroundColor({ color: "#0072FF" });
 
     await chrome.tabs.update(tabId, {
-      url: rewards + "earn",
+      url: rewards + "dashboard",
       active: true,
     });
     await wait(tabId);
@@ -4441,11 +4447,11 @@ async function activity(tabId, interruptible = true, options = {}) {
     if (!rewardsSessionOk) {
       logs &&
         log(
-          `[ACTIVITY] Rewards session not detected; reloading earn page once...`,
+          `[ACTIVITY] Rewards session not detected; reloading dashboard once...`,
           "warning",
         );
       await chrome.tabs.update(tabId, {
-        url: rewards + "earn",
+        url: rewards + "dashboard",
         active: true,
       });
       await wait(tabId);
@@ -4453,12 +4459,25 @@ async function activity(tabId, interruptible = true, options = {}) {
       rewardsSessionOk = await isRewardsSessionActive(tabId);
     }
     if (!rewardsSessionOk) {
-      sessionFailed = true;
-      logs &&
-        log(
-          `[ACTIVITY] Rewards login unavailable; cannot run Daily set or Keep earning.`,
-          "error",
-        );
+      // Edge can deny the content-script session probe on rewards.bing.com
+      // while the page itself is still signed in. Do not throw away the whole
+      // activity phase on that false negative: only a real Microsoft sign-in
+      // redirect proves that card scanning cannot succeed.
+      const activityUrl = await getTabUrl(tabId);
+      sessionFailed = isMicrosoftSignInUrl(activityUrl);
+      if (sessionFailed) {
+        logs &&
+          log(
+            `[ACTIVITY] Rewards redirected to Microsoft sign-in; cannot run Daily set or Keep earning.`,
+            "error",
+          );
+      } else {
+        logs &&
+          log(
+            `[ACTIVITY] Rewards session could not be confirmed; continuing with guarded card scan.`,
+            "warning",
+          );
+      }
     }
 
     if (!sessionFailed) {
@@ -5348,7 +5367,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         let activityTab = null;
         try {
           activityTab = await chrome.tabs.create({
-            url: rewards + "earn",
+            url: rewards + "dashboard",
             active: true,
           });
           await wait(activityTab.id);
