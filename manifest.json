@@ -44,7 +44,8 @@
     "https://wikimedia.org/*",
     "*://login.live.com/*",
     "*://login.microsoftonline.com/*",
-    "*://account.microsoft.com/*"
+    "*://account.microsoft.com/*",
+    "*://rewards.bing.com/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"

@@ -15,6 +15,25 @@
  * that merely lacks animate-pulse treated that hidden copy as "ready" and the
  * first Daily set pass then scanned the empty visible shell.
  */
+export function createDailySetStateProbe() {
+  return `(() => {
+    const visible = el => !el.closest('[hidden], template, [aria-hidden="true"]') &&
+      el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0 &&
+      getComputedStyle(el).visibility !== 'hidden';
+    const headings = [...document.querySelectorAll('h1,h2,h3,[role="heading"]')];
+    const heading = headings.find(el => visible(el) && /^(daily set|bộ hàng ngày|bộ nhiệm vụ)$/i.test(el.textContent.trim()));
+    const section = heading?.closest('section') || document.querySelector('#dailyset');
+    if (!section || !visible(section)) return { status: 'unknown', reason: 'Daily set section missing' };
+    if (section.querySelector('[class*="animate-pulse"], [aria-busy="true"]'))
+      return { status: 'loading', reason: 'Daily set still loading' };
+    const cards = [...section.querySelectorAll('a[href]')].filter(el => visible(el) &&
+      /(?:\\+?\\s*\\d+|completed|đã hoàn thành)/i.test(el.innerText));
+    if (cards.length < 3) return { status: 'unknown', reason: 'Daily set cards incomplete', total: cards.length };
+    const done = cards.filter(el => /\\bcompleted\\b|đã hoàn thành|đã hoàn tất/i.test(el.innerText)).length;
+    return { status: done === cards.length ? 'complete' : 'pending', done, total: cards.length };
+  })()`;
+}
+
 export function createRewardsSectionReadyProbe(patternSource) {
   return `(() => {
     try {
@@ -690,7 +709,9 @@ ${activityDomHelpers("earn", 560)}
 			const keepHeadingPattern = /keep earning|more activities|more points|earn more|^earn$|quests?|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm|^kiếm điểm$|thêm hoạt động|nhiệm vụ khác/i;
 			// Prefer a real heading so the "Earn more" CTA span on the Daily set
 			// page cannot steal the Keep earning anchor.
+			const primaryKeepHeadingPattern = /keep earning|more activities|more points|earn more|^earn$|kiếm thêm|hoạt động khác|tiếp tục kiếm|kiếm điểm thêm|^kiếm điểm$|thêm hoạt động|nhiệm vụ khác/i;
 			let keepHeading =
+				markerNodes.find((item) => item.semantic && item.text.length <= 48 && primaryKeepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.semantic && item.text.length <= 48 && keepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.text.length <= 48 && keepHeadingPattern.test(item.text));
 			if (!keepHeading) {

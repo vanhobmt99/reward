@@ -71,8 +71,18 @@ import {
   createRewardsSectionReadyProbe,
 } from "/js/injected-scripts.js";
 import { collectPendingOffers } from "/js/activity-offers.js";
+import { runDailySet } from "/js/daily-set-runner.js";
+import {
+  ACTIVITY_ISSUE_KEY,
+  checkActivityAccess,
+} from "/js/activity-access.js";
+import { createDailySetStateProbe } from "/js/injected-scripts.js";
 import { createCookieHelpers } from "/js/cookies.js";
-import { installGlobalCrashHandlers, recordCrash } from "/js/crash-logger.js";
+import {
+  installGlobalCrashHandlers,
+  recordCrash,
+  recordEvent,
+} from "/js/crash-logger.js";
 
 import {
   isRewardActivityUrl as isTrustedRewardActivityUrl,
@@ -782,9 +792,7 @@ async function checkRewardsApiSession() {
     // signed-in user look logged out and aborted the activity phase before the
     // first card scan.
     const data = await fetchRewardsUserinfo();
-    return Boolean(
-      data?.status?.userStatus || data?.dashboard?.userStatus,
-    );
+    return Boolean(data?.status?.userStatus || data?.dashboard?.userStatus);
   } catch {
     return false;
   }
@@ -1546,7 +1554,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   fingerprintPatchedTabs.delete(Number(tabId));
 });
 
-async function attach(tabId, interruptible = true) {
+async function attach(tabId, interruptible = true, onError = () => {}) {
   if (interruptible && !config?.runtime?.running) {
     logs &&
       log(`[ATTACH] Interrupted, skipping attach to tab ${tabId}.`, "warning");
@@ -1555,6 +1563,24 @@ async function attach(tabId, interruptible = true) {
   tabId = Number(tabId);
   const isAttached = await isDebuggerAttached(tabId);
   if (isAttached) {
+    // getTargets().attached includes DevTools and other extensions. Verify
+    // ownership before claiming that this worker can dispatch a click.
+    try {
+      await race(
+        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: "1",
+          returnByValue: true,
+        }),
+        shortestDelay * 3,
+      );
+    } catch (error) {
+      onError(error);
+      log(
+        `[ATTACH] - Existing debugger is not usable by this extension: ${error.message}`,
+        "error",
+      );
+      return false;
+    }
     logs &&
       log(`[ATTACH] - Debugger already attached to tab ${tabId}.`, "update");
     return true;
@@ -1592,6 +1618,7 @@ async function attach(tabId, interruptible = true) {
     await delay(shortestDelay, interruptible);
   } catch (error) {
     log(`[ATTACH] - Error attaching debugger: ${error.message}`, "error");
+    onError(error);
     return false;
   }
 
@@ -3834,6 +3861,12 @@ async function refreshActivityPressPoint(
 // click misses" failure). Returns true once the heading exists, false on
 // timeout — callers still proceed, the pass scripts have their own retry.
 async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
+  // Streamed cards can remain in hidden placeholders while the tab is in the
+  // background. Bring it forward before waiting for React to reveal them.
+  await race(
+    chrome.debugger.sendCommand({ tabId }, "Page.bringToFront"),
+    shortestDelay * 3,
+  ).catch(() => null);
   // The section shell (its <h2> included) streams in well before the cards do:
   // the card grid renders as Suspense skeletons carrying `animate-pulse`.
   // Matching the heading alone therefore reports "ready" against an empty
@@ -3861,12 +3894,7 @@ async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
   return false;
 }
 
-async function runApiOfferPass(
-  tabId,
-  memory,
-  sessionVisited,
-  sessionMisses,
-) {
+async function runApiOfferPass(tabId, memory, sessionVisited, sessionMisses) {
   let data = null;
   try {
     data = await fetchRewardsUserinfo();
@@ -3908,12 +3936,7 @@ async function runApiOfferPass(
       const ok = completed || offer.visitCompletes;
       if (ok) {
         processed++;
-        confirmActivityKeys(
-          memory,
-          sessionVisited,
-          sessionMisses,
-          [offer.key],
-        );
+        confirmActivityKeys(memory, sessionVisited, sessionMisses, [offer.key]);
         logs &&
           log(
             `[ACTIVITY] Completed ${offer.category}: ${offer.title || offer.url}`,
@@ -3971,7 +3994,9 @@ async function runDashboardActivityPass(
 
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
-  const blockedKeys = getBlockedActivityKeys(memory, sessionVisited);
+  // Live completion markers decide whether a Daily set card is done.
+  // Historical score deltas may belong to another concurrently earned reward.
+  const blockedKeys = new Set(sessionVisited);
   const beforeScore = await fetchRewardsSnapshot();
   const dashboardScript = createDashboardActivityScript(
     [...blockedKeys],
@@ -4320,6 +4345,10 @@ async function runEarnActivityPass(
 // Silent "Ready to claim" collector: clicks the pending-points card on the
 // dashboard and confirms it actually collected via the Rewards score delta.
 async function runClaimReadyPass(tabId, pass, allowStandaloneConfirm = false) {
+  await race(
+    chrome.debugger.sendCommand({ tabId }, "Page.bringToFront"),
+    shortestDelay * 3,
+  ).catch(() => null);
   const beforeScore = await fetchRewardsSnapshot();
   const claimScript = createClaimReadyScript(true, allowStandaloneConfirm);
   const result = await race(
@@ -4397,6 +4426,7 @@ async function runClaimReadyPass(tabId, pass, allowStandaloneConfirm = false) {
     retry,
     stage: value.stage || null,
     count: Number.isFinite(value.count) ? value.count : null,
+    reason: value.reason || null,
     pointDelta,
   };
 }
@@ -4431,6 +4461,7 @@ async function activity(tabId, interruptible = true, options = {}) {
   let meaningfulActivityRun = false;
   let sessionFailed = false;
   let activityStopped = false;
+  let dailySetComplete = false;
   let result = false;
   try {
     await chrome.action.setBadgeText({ text: "ACT" });
@@ -4442,6 +4473,44 @@ async function activity(tabId, interruptible = true, options = {}) {
     });
     await wait(tabId);
     await delay(mediumDelay, interruptible);
+
+    await chrome.storage.local.remove(ACTIVITY_ISSUE_KEY);
+    const access = await checkActivityAccess({
+      active: shouldContinueActivity,
+      userAgent: navigator.userAgent,
+      pause: () => delay(mediumDelay, interruptible),
+      tryAttach: async () => {
+        let error;
+        const ok = await attach(tabId, interruptible, (cause) => {
+          error = cause;
+        });
+        debuggerReady = ok;
+        return { ok, error };
+      },
+    });
+    if (!access.ok) {
+      if (access.issue) {
+        await chrome.storage.local.set({
+          [ACTIVITY_ISSUE_KEY]: {
+            ...access.issue,
+            observedAt: Date.now(),
+            tabId,
+          },
+        });
+        log(
+          "[ACTIVITY] " +
+            access.issue.message +
+            " (" +
+            access.issue.detail +
+            ")",
+          "error",
+        );
+        await recordEvent("activity-access", access.issue.detail, {
+          code: access.issue.code,
+        });
+      }
+      return false;
+    }
 
     let rewardsSessionOk = await isRewardsSessionActive(tabId);
     if (!rewardsSessionOk) {
@@ -4481,25 +4550,7 @@ async function activity(tabId, interruptible = true, options = {}) {
     }
 
     if (!sessionFailed) {
-      debuggerReady = await attach(tabId, interruptible);
-      if (!debuggerReady) {
-        logs &&
-          log(
-            `[ACTIVITY] First debugger attach failed; retrying once...`,
-            "warning",
-          );
-        await delay(mediumDelay, interruptible);
-        debuggerReady = await attach(tabId, interruptible);
-      }
-      if (!debuggerReady) {
-        logs &&
-          log(
-            `[ACTIVITY] Debugger attach failed after retry; cannot scan activity cards.`,
-            "error",
-          );
-      } else {
-        await enableDomains(tabId);
-      }
+      await enableDomains(tabId);
 
       if (debuggerReady) {
         // Wait for the Daily set section to actually render before the first
@@ -4549,42 +4600,83 @@ async function activity(tabId, interruptible = true, options = {}) {
       }
 
       if (debuggerReady) {
-        for (let pass = 1; pass <= 35; pass++) {
-          if (!shouldContinueActivity()) {
-            activityStopped = true;
-            break;
-          }
-          const passResult = await runDashboardActivityPass(
-            tabId,
-            activityMemory,
-            sessionVisited,
-            sessionMisses,
-            pass,
+        const dailyResult = await runDailySet({
+          active: shouldContinueActivity,
+          inspect: async () => {
+            await race(
+              chrome.debugger.sendCommand({ tabId }, "Page.bringToFront"),
+              shortestDelay * 3,
+            ).catch(() => null);
+            await delay(500, false);
+            const probe = await race(
+              chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+                expression: createDailySetStateProbe(),
+                returnByValue: true,
+              }),
+              longestDelay,
+            ).catch(() => null);
+            return (
+              probe?.result?.value || {
+                status: "unknown",
+                reason: "Daily set probe failed",
+              }
+            );
+          },
+          scan: (pass) =>
+            runDashboardActivityPass(
+              tabId,
+              activityMemory,
+              sessionVisited,
+              sessionMisses,
+              pass,
+            ),
+          recover: async (attempt, state) => {
+            sessionVisited.clear();
+            sessionMisses.clear();
+            log(
+              "[ACTIVITY] Daily set recovery " +
+                attempt +
+                ": " +
+                JSON.stringify(state),
+              "warning",
+            );
+            await chrome.tabs.update(tabId, {
+              url: rewards + "dashboard",
+              active: true,
+            });
+            await wait(tabId);
+            if (!shouldContinueActivity()) return;
+            await waitForRewardsSection(tabId, DAILY_SET_HEADING_PATTERN);
+            await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
+          },
+          onPass: (passResult) => {
+            totalClicked += passResult.clicked;
+            totalProcessed += passResult.processed;
+            if (Number.isFinite(passResult.pointDelta))
+              measuredDelta += passResult.pointDelta;
+            if (
+              passResult.clicked > 0 ||
+              passResult.processed > 0 ||
+              passResult.pointDelta > 0
+            )
+              meaningfulActivityRun = true;
+            clicked = totalClicked > 0 || totalProcessed > 0;
+          },
+        });
+        dailySetComplete = dailyResult.complete;
+        if (!dailySetComplete) {
+          log(
+            "[ACTIVITY] Daily set NOT completed: " +
+              JSON.stringify(dailyResult),
+            "error",
           );
-          totalClicked += passResult.clicked;
-          totalProcessed += passResult.processed;
-          if (Number.isFinite(passResult.pointDelta)) {
-            measuredDelta += passResult.pointDelta;
-          }
-          if (
-            passResult.clicked > 0 ||
-            passResult.processed > 0 ||
-            (Number.isFinite(passResult.pointDelta) &&
-              passResult.pointDelta > 0)
-          ) {
-            meaningfulActivityRun = true;
-          }
-          clicked = totalClicked > 0 || totalProcessed > 0;
-
-          if (passResult.retry) {
-            idlePasses = 0;
-          } else if (passResult.clicked === 0 && passResult.processed === 0) {
-            idlePasses++;
-          } else {
-            idlePasses = 0;
-          }
-          if (idlePasses >= 3) break;
+          return false;
         }
+        log(
+          "[ACTIVITY] Daily set completion verified: " +
+            JSON.stringify(dailyResult.state),
+          "success",
+        );
       } else {
         logs &&
           log(`[ACTIVITY] Skipping dashboard and earn passes.`, "warning");
@@ -4593,7 +4685,10 @@ async function activity(tabId, interruptible = true, options = {}) {
       if (debuggerReady && shouldContinueActivity()) {
         if (totalClicked === 0 && totalProcessed === 0) {
           logs &&
-            log(`[ACTIVITY] Daily set idle, moving to Keep earning.`, "update");
+            log(
+              `[ACTIVITY] Daily set verified, moving to Keep earning.`,
+              "update",
+            );
         }
         logs && log(`[ACTIVITY] Opening Keep earning page.`, "update");
         await chrome.tabs.update(tabId, {
@@ -4690,7 +4785,12 @@ async function activity(tabId, interruptible = true, options = {}) {
           }
           await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
           let claimFlowOpened = false;
-          for (let pass = 1; pass <= 6; pass++) {
+          let claimNoControlPasses = 0;
+          // The Rewards homepage is streamed by React. A complete initial scan
+          // can therefore finish before the Ready-to-claim widget hydrates;
+          // keep enough passes for one bounded reload-and-rescan instead of
+          // treating the first empty page as proof that no points are pending.
+          for (let pass = 1; pass <= 12; pass++) {
             if (!shouldContinueActivity()) break;
             const claimResult = await runClaimReadyPass(
               tabId,
@@ -4699,6 +4799,31 @@ async function activity(tabId, interruptible = true, options = {}) {
             );
             if (claimResult.clicked && claimResult.stage === "open") {
               claimFlowOpened = true;
+            }
+            if (claimResult.reason === "no claim control found") {
+              claimNoControlPasses++;
+              if (claimNoControlPasses === 1) {
+                logs &&
+                  log(
+                    "[ACTIVITY] Claim widget was not rendered after the first scan; reloading Rewards homepage once.",
+                    "warning",
+                  );
+                await chrome.tabs.reload(tabId);
+                await wait(tabId);
+                await delay(mediumDelay, interruptible);
+                await sendTabMessage(
+                  tabId,
+                  { action: "closePopups" },
+                  "ACTIVITY",
+                );
+                continue;
+              }
+              if (claimNoControlPasses < 3) {
+                await delay(shortestDelay, true);
+                continue;
+              }
+            } else if (claimResult.reason !== "nothing pending") {
+              claimNoControlPasses = 0;
             }
             if (
               Number.isFinite(claimResult.pointDelta) &&
@@ -4730,7 +4855,7 @@ async function activity(tabId, interruptible = true, options = {}) {
           `[ACTIVITY] Engine finished. Activity clicks: ${totalClicked}, processed tabs: ${totalProcessed}, measured delta: ${measuredDelta}.`,
           clicked ? "success" : "warning",
         );
-      result = Boolean(clicked || meaningfulActivityRun);
+      result = dailySetComplete;
     }
   } catch (error) {
     logs && log(`[ACTIVITY] Error: ${error.message}`, "error");
@@ -4741,10 +4866,20 @@ async function activity(tabId, interruptible = true, options = {}) {
           `[ACTIVITY] Activity aborted because Rewards login was unavailable.`,
           "warning",
         );
+    } else if (!dailySetComplete) {
+      log(
+        "[ACTIVITY] Daily set unresolved; leaving Rewards open for inspection.",
+        "warning",
+      );
     } else if (!clicked && !meaningfulActivityRun) {
       logs && log(`[ACTIVITY] No activities to click.`, "warning");
     }
-    if (meaningfulActivityRun && activityMemory && recordRun) {
+    if (
+      dailySetComplete &&
+      meaningfulActivityRun &&
+      activityMemory &&
+      recordRun
+    ) {
       await recordActivityRun(activityMemory);
     } else if (meaningfulActivityRun && activityMemory && !recordRun) {
       logs &&
@@ -4755,7 +4890,7 @@ async function activity(tabId, interruptible = true, options = {}) {
     } else if (!sessionFailed) {
       logs &&
         log(
-          `[ACTIVITY] Run not counted because no activity cards were processed.`,
+          `[ACTIVITY] Run not counted: completion was not verified or no new activity was confirmed.`,
           "warning",
         );
     }
@@ -5365,15 +5500,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         });
 
         let activityTab = null;
+        let activityCompleted = false;
         try {
           activityTab = await chrome.tabs.create({
             url: rewards + "dashboard",
             active: true,
           });
           await wait(activityTab.id);
-          await activity(activityTab.id, true, { recordRun: false });
+          activityCompleted = await activity(activityTab.id, true, {
+            recordRun: false,
+          });
         } finally {
-          if (activityTab?.id) {
+          if (activityTab?.id && activityCompleted) {
             try {
               await chrome.tabs.remove(activityTab.id);
             } catch (error) {

@@ -4,6 +4,7 @@ import { devices } from "/js/devices.js";
 import { createDefaultConfig } from "/js/config-defaults.js";
 import { ACTIONS, MESSAGE_TIMEOUT_MS } from "/js/messages.js";
 import { exportCrashLogText, clearCrashLog } from "/js/crash-logger.js";
+import { ACTIVITY_ISSUE_KEY } from "/js/activity-access.js";
 
 /**
  * Send a message to the service worker but never hang forever if the worker is
@@ -252,6 +253,11 @@ async function resetDevice() {
   }
 }
 async function updateUI() {
+  const issueData = await chrome.storage.local.get(ACTIVITY_ISSUE_KEY);
+  const issue = issueData[ACTIVITY_ISSUE_KEY];
+  $("#activityIssue")
+    .text(issue?.message || "")
+    .prop("hidden", !issue?.message);
   const storedConfig = await get();
   applyConfigDefaults(config, storedConfig);
   const logs = config?.control?.log;
@@ -1169,7 +1175,10 @@ $(document).ready(async function () {
   );
 });
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && (changes.config || changes.activityMemory)) {
+  if (
+    area === "local" &&
+    (changes.config || changes.activityMemory || changes[ACTIVITY_ISSUE_KEY])
+  ) {
     scheduleUIUpdate();
   }
 });

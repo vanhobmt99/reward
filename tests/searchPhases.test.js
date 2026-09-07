@@ -476,6 +476,7 @@ describe("handlePostSearchTasks()", () => {
   test("marks run unsuccessful when activity engine returns false", async () => {
     const config = makeConfig({ control: { clear: 1, act: 1 } });
 
+    const removeTabFn = jest.fn().mockResolvedValue();
     const result = await handlePostSearchTasks(
       { desk: 3, mob: 0 },
       "session-1",
@@ -491,7 +492,7 @@ describe("handlePostSearchTasks()", () => {
         waitFn: jest.fn().mockResolvedValue(),
         delayFn: jest.fn().mockResolvedValue(),
         createTabFn: jest.fn().mockResolvedValue({ id: 456 }),
-        removeTabFn: jest.fn().mockResolvedValue(),
+        removeTabFn,
         updateTabFn: jest.fn().mockResolvedValue(),
         activityFn: jest.fn().mockResolvedValue(false),
         shortestDelay: 100,
@@ -502,6 +503,7 @@ describe("handlePostSearchTasks()", () => {
     );
 
     expect(result.runSuccessful).toBe(false);
+    expect(removeTabFn).not.toHaveBeenCalledWith(456);
   });
 
   test("marks run unsuccessful when activities throw", async () => {

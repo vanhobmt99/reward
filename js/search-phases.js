@@ -392,7 +392,7 @@ export async function handlePostSearchTasks(
         if (!activityOk) {
           activitySuccessful = false;
           log(
-            `[POST_SEARCH] - Activity engine finished without clicking any cards.`,
+            `[POST_SEARCH] - Activity incomplete; keeping Rewards tab open for inspection.`,
             "warning",
           );
         } else {
@@ -403,9 +403,9 @@ export async function handlePostSearchTasks(
         }
 
         try {
-          await removeTabFn(activityTabId);
+          if (activityOk) await removeTabFn(activityTabId);
           log(
-            `[POST_SEARCH] - Closed activity tab with ID: ${activityTabId}`,
+            `[POST_SEARCH] - Activity tab ${activityTabId}: ${activityOk ? "closed" : "kept open"}`,
             "update",
           );
         } catch (err) {

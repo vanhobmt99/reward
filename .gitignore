@@ -21,6 +21,7 @@ terminals/
 
 # Test coverage output
 coverage/
+test-results/
 
 # Machine-local Claude Code settings (permission allowlist), not shared
 .claude/settings.local.json

@@ -564,6 +564,18 @@ describe("service regressions", () => {
     expect(serviceSource).toContain("refreshClaimPressPoint(");
   });
 
+  test("claim retries a React homepage that rendered before its claim widget", () => {
+    const activityStart = serviceSource.indexOf("async function activity(");
+    const activityEnd = serviceSource.indexOf("async function initialise(", activityStart);
+    const activitySource = serviceSource.slice(activityStart, activityEnd);
+
+    expect(activitySource).toContain("url: rewards,");
+    expect(activitySource).toContain("let claimNoControlPasses = 0;");
+    expect(activitySource).toContain("claimResult.reason === \"no claim control found\"");
+    expect(activitySource).toContain("await chrome.tabs.reload(tabId);");
+    expect(activitySource).toContain("for (let pass = 1; pass <= 12; pass++)");
+  });
+
   test("a preparatory Bing-search scroll receives another solver pass", () => {
     expect(serviceSource).toContain("if (value?.retry) {");
     expect(serviceSource).toContain("await delay(600 + Math.random() * 400, true)");

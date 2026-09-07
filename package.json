@@ -5,6 +5,7 @@
   "scripts": {
     "pretest": "node tests/check_syntax.js",
     "test": "jest --verbose",
+    "test:claim": "playwright test --config=playwright.config.mjs",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
     "lint": "eslint js tests eslint.config.js",
@@ -13,6 +14,7 @@
     "format:check": "prettier --check \"**/*.{js,json,md,html,css}\""
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^9.1.2",
     "globals": "^15.15.0",

@@ -119,7 +119,7 @@ export function recordCrash(context, error, extra) {
 }
 
 /** Record a non-fatal breadcrumb (e.g. "run started", "phase = mobile"). */
-function recordEvent(context, message, extra) {
+export function recordEvent(context, message, extra) {
   const entry = {
     ts: new Date().toISOString(),
     level: "event",
