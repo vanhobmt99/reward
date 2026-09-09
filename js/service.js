@@ -493,13 +493,26 @@ async function ensureAlarms() {
             "warning",
           );
       }
-    } else {
-      // Leaving m5 (or fresh install): make sure no stale daily alarm lingers.
-      await chrome.alarms.clear("schedule_daily");
     }
+    await clearIncompatibleAlarms();
   } catch (error) {
     logs &&
       log(`[ALARMS] Could not ensure alarms: ${error.message}`, "warning");
+  }
+}
+
+// Configuration edits must retire alarms that no longer match the selected
+// mode, but must not *create* a schedule. Choosing a mode in the popup is only
+// a draft; the user explicitly activates it with the schedule action.
+async function clearIncompatibleAlarms() {
+  if (config?.schedule?.mode !== "m5") {
+    await chrome.alarms.clear("schedule_daily");
+  }
+  if (!isScheduledModeActive()) {
+    await chrome.alarms.clear("schedule");
+  }
+  if (config?.schedule?.mode !== "m2") {
+    await chrome.alarms.clear("startup_retry");
   }
 }
 
@@ -1411,6 +1424,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
       stored,
       stored ? "storage_changed" : "storage_removed",
     );
+    await clearIncompatibleAlarms();
   } catch (error) {
     // applyStoredConfig -> set() can reject (e.g. cross-context write-lock
     // timeout). Contain it here like the alarm/message handlers instead of
@@ -2621,7 +2635,10 @@ async function stabilizeAfterSearch(
 ) {
   try {
     const opened = (await chrome.tabs.query({})).filter(
-      (tab) => tab.id !== tabId && !existingTabIds.has(tab.id),
+      (tab) =>
+        tab.id !== tabId &&
+        !existingTabIds.has(tab.id) &&
+        Number(tab.openerTabId) === Number(tabId),
     );
     for (const tab of opened) {
       await chrome.tabs.remove(tab.id).catch(() => {});
@@ -3544,6 +3561,16 @@ async function completeRewardActivityTab(tabId) {
     if (!isRuntimeActive()) return false;
     const loaded = await wait(tabId, true);
     if (!loaded || !isRuntimeActive()) return false;
+    // API offers and their redirects are external input. Never attach the
+    // debugger or run a solver after the tab leaves the trusted activity hosts.
+    if (!isRewardActivityUrl(await getTabUrl(tabId))) {
+      logs &&
+        log(
+          `[ACTIVITY] Refusing to automate non-reward activity URL in tab ${tabId}.`,
+          "warning",
+        );
+      return false;
+    }
     await delay(mediumDelay, true);
     if (!isRuntimeActive()) return false;
 
@@ -3907,7 +3934,9 @@ async function runApiOfferPass(tabId, memory, sessionVisited, sessionMisses) {
     return 0;
   }
 
-  const offers = collectPendingOffers(data).filter((offer) => offer.url);
+  const offers = collectPendingOffers(data).filter(
+    (offer) => offer.url && isRewardActivityUrl(offer.url),
+  );
   logs &&
     log(
       `[ACTIVITY] API listed ${offers.length} pending offer(s).`,
@@ -5175,8 +5204,48 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   try {
     const stored = await get();
     await applyStoredConfig(stored, "alarm");
-    logs && log(`[ALARM] - Alarm triggered.`, "update");
-    if (alarm.name === "schedule") {
+    logs && log(`[ALARM] - Alarm triggered: ${alarm?.name}`, "update");
+    if (alarm.name === "startup_retry") {
+      if (config?.schedule?.mode === "m2") {
+        const retryData = await chromeStorageGet("_startupRetryCount").catch(
+          () => ({}),
+        );
+        let retryCount = Number(retryData?._startupRetryCount || 0);
+        logs &&
+          log(
+            `[ALARM] - Retrying startup run (attempt ${retryCount + 1})...`,
+            "update",
+          );
+        const started = await tryStartScheduledRun("STARTUP_RETRY");
+        if (started) {
+          await chromeStorageSet({ _startupRetryCount: 0 }).catch(() => {});
+          await chrome.alarms.clear("startup_retry");
+        } else {
+          retryCount++;
+          const limitedPlan = limitSearchPlanForToday(config?.schedule, {
+            silent: true,
+          });
+          const hasWork = hasSearchWork(limitedPlan) || hasActivityWork();
+          if (hasWork && retryCount < 3) {
+            await chromeStorageSet({ _startupRetryCount: retryCount }).catch(
+              () => {},
+            );
+            logs &&
+              log(
+                `[ALARM] - Startup retry failed, trying again in 2 minutes (attempt ${retryCount}/3)...`,
+                "warning",
+              );
+            await chrome.alarms.create("startup_retry", { delayInMinutes: 2 });
+          } else {
+            await chromeStorageSet({ _startupRetryCount: 0 }).catch(() => {});
+            await chrome.alarms.clear("startup_retry");
+          }
+        }
+      } else {
+        await chromeStorageSet({ _startupRetryCount: 0 }).catch(() => {});
+        await chrome.alarms.clear("startup_retry");
+      }
+    } else if (alarm.name === "schedule") {
       if (isScheduledModeActive()) {
         await tryStartScheduledRun("ALARM");
       } else {
@@ -5244,18 +5313,34 @@ chrome.runtime.onInstalled.addListener(async () => {
 });
 chrome.runtime.onStartup.addListener(async () => {
   try {
+    await configReady;
     const stored = await get();
     await applyStoredConfig(stored, "startup");
     log(`[STARTUP] - Extension started.`, "success");
+
+    // The 6 AM "clear" and 3 PM "clear_afternoon" (Asian-timezone reset) alarms
+    // are owned by ensureAlarms(); reuse it so alarm setup has a single source
+    // of truth. Re-arm immediately on startup instead of waiting for search run.
+    await ensureAlarms();
+
+    await chromeStorageSet({ _startupRetryCount: 0 }).catch(() => {});
     const isAtStartupMode = config?.schedule?.mode === "m2";
     if (isScheduledModeActive() || isAtStartupMode) {
       await delay(longestDelay, false);
-      await tryStartScheduledRun("STARTUP");
+      const started = await tryStartScheduledRun("STARTUP");
+      if (!started && isAtStartupMode) {
+        const limitedPlan = limitSearchPlanForToday(config?.schedule, {
+          silent: true,
+        });
+        if (hasSearchWork(limitedPlan) || hasActivityWork()) {
+          log(
+            `[STARTUP] - Startup run postponed, retrying in 1 minute...`,
+            "warning",
+          );
+          await chrome.alarms.create("startup_retry", { delayInMinutes: 1 });
+        }
+      }
     }
-    // The 6 AM "clear" and 3 PM "clear_afternoon" (Asian-timezone reset) alarms
-    // are owned by ensureAlarms(); reuse it so alarm setup has a single source
-    // of truth instead of being recreated here on every startup.
-    await ensureAlarms();
   } catch (error) {
     log(`[STARTUP] - Error during startup: ${error.message}`, "error");
     recordCrash("startup", error);
@@ -5363,6 +5448,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           reply({
             success: true,
             message: `Đã đặt lịch chạy hằng ngày lúc ${config.schedule.time}.`,
+          });
+          return;
+        }
+
+        if (config?.schedule?.mode === "m2") {
+          await chrome.alarms.clear("schedule");
+          log(
+            `[MESSAGE] - Startup schedule configured. Runs automatically when browser starts.`,
+            "update",
+          );
+          reply({
+            success: true,
+            message: "Đã bật: Tự động chạy khi mở trình duyệt.",
           });
           return;
         }

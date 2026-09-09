@@ -87,6 +87,15 @@ describe("service regressions", () => {
     expect(serviceSource).toContain('await chrome.alarms.clear("schedule");');
   });
 
+  test("config edits retire incompatible alarms without arming a selected mode", () => {
+    const storageListener = serviceSource.slice(
+      serviceSource.indexOf("chrome.storage.onChanged.addListener"),
+      serviceSource.indexOf("async function handleUserStop"),
+    );
+    expect(storageListener).toContain("await clearIncompatibleAlarms();");
+    expect(storageListener).not.toContain("await ensureAlarms();");
+  });
+
   test("popup saves merge into latest config and command responses report real outcomes", () => {
     expect(popupSource).toContain("async function saveConfigMutation(mutator)");
     expect(popupSource).toContain(
@@ -566,19 +575,26 @@ describe("service regressions", () => {
 
   test("claim retries a React homepage that rendered before its claim widget", () => {
     const activityStart = serviceSource.indexOf("async function activity(");
-    const activityEnd = serviceSource.indexOf("async function initialise(", activityStart);
+    const activityEnd = serviceSource.indexOf(
+      "async function initialise(",
+      activityStart,
+    );
     const activitySource = serviceSource.slice(activityStart, activityEnd);
 
     expect(activitySource).toContain("url: rewards,");
     expect(activitySource).toContain("let claimNoControlPasses = 0;");
-    expect(activitySource).toContain("claimResult.reason === \"no claim control found\"");
+    expect(activitySource).toContain(
+      'claimResult.reason === "no claim control found"',
+    );
     expect(activitySource).toContain("await chrome.tabs.reload(tabId);");
     expect(activitySource).toContain("for (let pass = 1; pass <= 12; pass++)");
   });
 
   test("a preparatory Bing-search scroll receives another solver pass", () => {
     expect(serviceSource).toContain("if (value?.retry) {");
-    expect(serviceSource).toContain("await delay(600 + Math.random() * 400, true)");
+    expect(serviceSource).toContain(
+      "await delay(600 + Math.random() * 400, true)",
+    );
     expect(serviceSource).toContain("value?.completed");
   });
 
@@ -596,12 +612,17 @@ describe("service regressions", () => {
 
     expect(sessionProbe).toContain("await fetchRewardsUserinfo()");
     expect(sessionProbe).toContain("data?.dashboard?.userStatus");
-    expect(sessionProbe).not.toContain('fetch("https://rewards.bing.com/api/getuserinfo"');
+    expect(sessionProbe).not.toContain(
+      'fetch("https://rewards.bing.com/api/getuserinfo"',
+    );
   });
 
   test("an unverified Rewards probe only blocks a real Microsoft sign-in redirect", () => {
     const activityStart = serviceSource.indexOf("async function activity(");
-    const activityEnd = serviceSource.indexOf("async function initialise(", activityStart);
+    const activityEnd = serviceSource.indexOf(
+      "async function initialise(",
+      activityStart,
+    );
     const activitySource = serviceSource.slice(activityStart, activityEnd);
 
     expect(serviceSource).toContain("function isMicrosoftSignInUrl(url)");
@@ -623,6 +644,27 @@ describe("service regressions", () => {
     expect(serviceSource).toContain("stray tab");
   });
 
+  test("search cleanup only closes tabs opened by the automation tab", () => {
+    const cleanupStart = serviceSource.indexOf(
+      "async function stabilizeAfterSearch",
+    );
+    const cleanupEnd = serviceSource.indexOf("function isBingPageUrl", cleanupStart);
+    const cleanupSource = serviceSource.slice(cleanupStart, cleanupEnd);
+    expect(cleanupSource).toContain("Number(tab.openerTabId) === Number(tabId)");
+  });
+
+  test("API activity offers are allowlisted before opening or debugging", () => {
+    const apiPassStart = serviceSource.indexOf("async function runApiOfferPass");
+    const apiPassEnd = serviceSource.indexOf("const DAILY_SET_HEADING_PATTERN", apiPassStart);
+    const apiPass = serviceSource.slice(apiPassStart, apiPassEnd);
+    expect(apiPass).toContain("offer.url && isRewardActivityUrl(offer.url)");
+    const completeStart = serviceSource.indexOf("async function completeRewardActivityTab");
+    const completeEnd = serviceSource.indexOf("function isRewardActivityUrl", completeStart);
+    expect(serviceSource.slice(completeStart, completeEnd)).toContain(
+      "if (!isRewardActivityUrl(await getTabUrl(tabId)))",
+    );
+  });
+
   test("scheduled runs fail closed when Rewards counters are unavailable", () => {
     expect(serviceSource).toContain(
       "Rewards counters unavailable; postponed scheduled run.",
@@ -634,5 +676,44 @@ describe("service regressions", () => {
     expect(serviceSource).not.toContain("flushDiagnosticLog");
     expect(serviceSource).not.toContain("chrome.downloads");
     expect(manifest.permissions).not.toContain("downloads");
+  });
+
+  test("onStartup waits for configReady and ensures alarms before search delays", () => {
+    const startupIndex = serviceSource.indexOf(
+      "chrome.runtime.onStartup.addListener",
+    );
+    expect(startupIndex).toBeGreaterThan(-1);
+    const startupBlock = serviceSource.slice(
+      startupIndex,
+      serviceSource.indexOf(
+        "chrome.runtime.onMessage.addListener",
+        startupIndex,
+      ),
+    );
+    const configReadyIndex = startupBlock.indexOf("await configReady;");
+    const ensureAlarmsIndex = startupBlock.indexOf("await ensureAlarms();");
+    const delayIndex = startupBlock.indexOf(
+      "await delay(longestDelay, false);",
+    );
+    expect(configReadyIndex).toBeGreaterThan(-1);
+    expect(ensureAlarmsIndex).toBeGreaterThan(-1);
+    expect(ensureAlarmsIndex).toBeLessThan(delayIndex);
+    expect(startupBlock).toContain('chrome.alarms.create("startup_retry"');
+  });
+
+  test("alarms handler supports startup_retry for m2 schedule mode", () => {
+    expect(serviceSource).toContain('alarm.name === "startup_retry"');
+    expect(serviceSource).toContain(
+      'await tryStartScheduledRun("STARTUP_RETRY");',
+    );
+  });
+
+  test("ACTIONS.SCHEDULE confirms m2 mode without running immediately", () => {
+    const scheduleCase = serviceSource.slice(
+      serviceSource.indexOf("case ACTIONS.SCHEDULE:"),
+      serviceSource.indexOf("case ACTIONS.STOP:"),
+    );
+    expect(scheduleCase).toContain('config?.schedule?.mode === "m2"');
+    expect(scheduleCase).toContain("Đã bật: Tự động chạy khi mở trình duyệt.");
   });
 });

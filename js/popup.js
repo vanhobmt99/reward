@@ -279,8 +279,9 @@ async function updateUI() {
   $scheduleMode.find(`.${config.schedule.mode}`).addClass("active");
   // The daily-time row only matters in m5 mode.
   const isDailyMode = config?.schedule?.mode === "m5";
+  const isStartupMode = config?.schedule?.mode === "m2";
   $scheduleTimeRow.prop("hidden", !isDailyMode);
-  $scheduleTimeHint.prop("hidden", !isDailyMode);
+  $scheduleTimeHint.prop("hidden", !isDailyMode && !isStartupMode);
   // Don't clobber the picker while the user is actively editing it.
   if (!$scheduleTime.is(":focus")) {
     $scheduleTime.val(config?.schedule?.time || "08:00");
@@ -304,6 +305,10 @@ async function updateUI() {
     } catch {
       // chrome.alarms unavailable (e.g. test env) — keep the static hint.
     }
+  } else if (isStartupMode) {
+    $scheduleTimeHint.text(
+      "Đã chọn: Tự chạy khi mở trình duyệt (Lưu ý: Cần tắt Startup Boost của Edge nếu có)",
+    );
   }
   if (config?.runtime?.running) {
     $searchTrigger.text("Dừng").addClass("stopping");
@@ -811,6 +816,18 @@ $(document).ready(async function () {
       next.schedule.mode = mode;
     });
     logs && log(`[SCHEDULE] - Schedule mode selected: ${mode}`, "update");
+    if (mode === "m2") {
+      showToast("Đã chọn: Tự chạy khi mở trình duyệt", "info");
+    } else if (mode === "m1") {
+      showToast("Đã chuyển sang chế độ thủ công", "info");
+    } else if (mode === "m3") {
+      showToast("Đã chọn: Tự chạy mỗi ~5 phút/lần", "info");
+    } else if (mode === "m4") {
+      showToast("Đã chọn: Tự chạy mỗi ~15 phút/lần", "info");
+    } else if (mode === "m5") {
+      showToast("Đã chọn: Tự chạy hằng ngày theo giờ", "info");
+    }
+    await updateUI();
   });
   // One-shot action buttons share this skeleton: ignore re-entrant clicks,
   // disable while running, run `action($btn, $btnText)` (which does its own
