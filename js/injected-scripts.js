@@ -1114,45 +1114,54 @@ export function createClaimReadyScript(
 					(el.innerText || el.textContent || '') + ' ' +
 					((el.getAttribute && (el.getAttribute('aria-label') || el.getAttribute('title'))) || '')
 				);
-				const readyPattern = /ready to claim|to be claimed|claim your|unclaimed|pending points?|points? (are )?ready|sẵn sàng nhận|chờ nhận|điểm chờ|chưa nhận|điểm chưa nhận/i;
-				const claimWordPattern = /\\b(claim all|collect all|claim now|claim|collect|nhận tất cả|nhận ngay|nhận điểm|nhận)\\b/i;
-				const rejectPattern = /redeem|gift card|donate|sweepstake|history|order|đổi thưởng|đổi quà|đổi điểm/i;
-				const clickableSelector = 'button, a[href], [role="button"], [aria-expanded], [data-react-aria-pressable], [data-pressable], [tabindex]:not([tabindex="-1"])';
+				const readyPattern = /ready to claim|ready to collect|to be claimed|claim your|unclaimed|pending points?|points? (?:are )?ready|s\u1eb5n s\u00e0ng nh\u1eadn|ch\u1edd nh\u1eadn|\u0111i\u1ec3m ch\u1edd|ch\u01b0a nh\u1eadn|\u0111i\u1ec3m ch\u01b0a nh\u1eadn|nh\u1eadn th\u01b0\u1edfng/i;
+				const claimWordPattern = /\\b(claim all|collect all|claim now|claim points?|claim|collect|nh\u1eadn t\u1ea5t c\u1ea3|nh\u1eadn ngay|nh\u1eadn \u0111i\u1ec3m|nh\u1eadn)\\b/i;
+				const rejectPattern = /redeem|gift card|donate|sweepstake|history|order|\u0111\u1ed5i th\u01b0\u1edfng|\u0111\u1ed5i qu\u00e0|\u0111\u1ed5i \u0111i\u1ec3m/i;
+				const clickableSelector = 'button, a[href], [role="button"], [role="link"], [aria-expanded], [data-react-aria-pressable], [data-pressable], [tabindex]:not([tabindex="-1"])';
 				const clickables = Array.from(
 					document.querySelectorAll(clickableSelector)
 				);
 
-				// Locate the ready-to-claim card and its pending count, if present.
+				// Locate the ready-to-claim card and its pending count across matching elements.
 				let readyCard = null;
 				let pendingCount = null;
 				const readyCandidates = Array.from(new Set([
 					...clickables,
-					...document.querySelectorAll('[data-testid], article, section, [class*="claim" i], [class*="pending" i]')
+					...document.querySelectorAll('h1, h2, h3, h4, h5, h6, p, span, div, a, button, [role="button"], [data-testid], article, section, [class*="claim" i], [class*="pending" i], [class*="card" i], [class*="tile" i], [class*="item" i]')
 				]));
 				for (const el of readyCandidates) {
 					if (!isVisible(el)) continue;
 					const t = textOf(el);
 					if (t.length <= 500 && readyPattern.test(t) && !rejectPattern.test(t)) {
-						// "1,250" splits into [1, 250] under \\b\\d+\\b, so strip thousands
-						// separators first, then prefer the number that actually follows
-						// the ready-to-claim label over the largest number on the card
-						// (a wrapper can also carry the "Available points" balance).
-						const compact = t.replace(/(\\d)[,.\\u00a0\\u202f](?=\\d{3}(?!\\d))/g, '$1');
+						const card = (el.matches?.('article, section, [data-testid], [class*="card" i], [class*="tile" i], [class*="item" i], [class*="widget" i]') ? el : (el.closest?.('article, section, [data-testid], [class*="card" i], [class*="tile" i], [class*="item" i], [class*="widget" i], [class*="claim" i], [class*="pending" i], [role="button"], a[href], button, div') || el));
+						const scopeText = textOf(card).length <= 600 ? textOf(card) : t;
+
+						const compact = scopeText.replace(/(\\d)[,.\\u00a0\\u202f](?=\\d{3}(?!\\d))/g, '$1');
 						const labelled = compact.match(
-							/(?:ready to claim|to be claimed|claim your|unclaimed|pending points?|sẵn sàng nhận|chờ nhận|điểm chờ|chưa nhận)\\D{0,12}(\\d+)/i
+							/(?:ready to claim|ready to collect|to be claimed|claim your|unclaimed|pending points?|points? (?:are )?ready|s\u1eb5n s\u00e0ng nh\u1eadn|ch\u1edd nh\u1eadn|\u0111i\u1ec3m ch\u1edd|ch\u01b0a nh\u1eadn|\u0111i\u1ec3m ch\u01b0a nh\u1eadn|nh\u1eadn th\u01b0\u1edfng)\\D{0,20}(\\d+)/i
 						);
 						const numbers = (compact.match(/\\b\\d+\\b/g) || []).map(Number).filter(Number.isFinite);
 						const n = labelled ?
 							Number(labelled[1]) :
 							(numbers.length ? Math.max(...numbers) : null);
-						// Explicit "0" on the ready card means nothing is pending:
-						// record it so the zero short-circuit below fires instead of
-						// falling through to hunt (and possibly mis-click) a confirm.
 						if (n === 0) { pendingCount = 0; break; }
-						readyCard = el.matches?.(clickableSelector) ?
-							el :
-							(el.querySelector?.(clickableSelector) || el.closest?.(clickableSelector));
-						if (readyCard) { pendingCount = n; break; }
+
+						// Find inner "Claim" button/link inside card if present (e.g. "Claim >")
+						const innerClaimables = Array.from(card.querySelectorAll(clickableSelector + ', span, p, div')).filter(isVisible);
+						const innerClaimBtn = innerClaimables.find((child) => {
+							const ct = textOf(child);
+							return ct.length <= 40 && !readyPattern.test(ct) && claimWordPattern.test(ct) && !rejectPattern.test(ct);
+						});
+
+						const candidateTarget = innerClaimBtn || (card.matches?.(clickableSelector) ?
+							card :
+							(el.matches?.(clickableSelector) ? el : (card.querySelector?.(clickableSelector) || card.closest?.(clickableSelector) || el)));
+
+						if (candidateTarget) {
+							readyCard = candidateTarget;
+							pendingCount = n;
+							break;
+						}
 					}
 				}
 
@@ -1160,15 +1169,12 @@ export function createClaimReadyScript(
 					return { clicked: false, count: 0, reason: 'nothing pending' };
 				}
 
-				// Two-step flow: clicking the card opens a claim dialog whose own
-				// button actually collects the points. So on each pass we PREFER a
-				// short "Claim points / Collect" confirm control (the dialog action);
-				// only if none exists yet do we click the card to open the dialog.
+				// Two-step flow: check for confirm button in dialogs or standalone confirm
 				let target = null;
 				let targetText = '';
 				let stage = '';
 				const visibleDialogs = Array.from(
-					document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog" i], [class*="dialog" i], [class*="modal" i]')
+					document.querySelectorAll('[role="dialog"], [aria-modal="true"], [data-testid*="dialog" i], [class*="dialog" i], [class*="modal" i], [class*="flyout" i], [class*="popup" i], [class*="drawer" i]')
 				).filter(isVisible);
 				const confirmClickables = visibleDialogs.length ?
 					visibleDialogs.flatMap((root) => Array.from(root.querySelectorAll(clickableSelector))) :
@@ -1176,8 +1182,8 @@ export function createClaimReadyScript(
 				for (const el of confirmClickables) {
 					if (!isVisible(el)) continue;
 					const t = textOf(el);
-					if (t.length > 60) continue; // confirm buttons are short
-					if (readyPattern.test(t)) continue; // never the card itself
+					if (t.length > 60) continue;
+					if (readyPattern.test(t)) continue;
 					if (claimWordPattern.test(t) && !rejectPattern.test(t)) {
 						target = el;
 						targetText = t;
@@ -1185,6 +1191,7 @@ export function createClaimReadyScript(
 						break;
 					}
 				}
+
 				const claimFlowActive = allowStandaloneConfirm || visibleDialogs.length > 0;
 				if (!target && readyCard && !claimFlowActive) {
 					target = readyCard;
@@ -1246,10 +1253,7 @@ export function createClaimReadyScript(
 					document.documentElement.style.scrollBehavior = htmlStyle;
 					document.body.style.scrollBehavior = bodyStyle;
 				} catch (_) {}
-				// Microsoft Rewards cards/buttons are React Aria pressables
-				// (data-react-aria-pressable): usePress listens on pointerdown/up
-				// and IGNORES a bare element.click(). Dispatch a full pointer +
-				// mouse press sequence so the press actually registers.
+
 				const pressPoint = (function press(el) {
 					const rect = el.getBoundingClientRect();
 					const visibleLeft = Math.max(rect.left, 1);

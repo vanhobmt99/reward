@@ -2,15 +2,9 @@ const DEFAULT_REWARD_HOSTS = [
   "bing.com",
   "microsoft.com",
   "live.com",
-  "office.com",
-  "outlook.com",
   "msn.com",
-  "windows.com",
-  "azure.com",
   "xbox.com",
-  "skype.com",
   "microsoftonline.com",
-  "sharepoint.com",
 ];
 
 export function isRewardActivityUrl(url, allowedHosts = DEFAULT_REWARD_HOSTS) {
@@ -35,14 +29,29 @@ export function isActivityOpenedTab(
   if (!tab?.id || Number(tab.id) === Number(mainTabId)) return false;
   if (existingTabIds?.has(tab.id)) return false;
 
-  // Only touch tabs that the automation tab actually opened. A URL/domain
-  // match alone is unsafe: the user may open Bing/Outlook while activities run.
-  if (Number(tab.openerTabId) !== Number(mainTabId)) return false;
+  // If the tab's opener is explicitly another tab, ignore it.
+  if (
+    tab.openerTabId != null &&
+    Number(tab.openerTabId) !== Number(mainTabId)
+  ) {
+    return false;
+  }
 
   const url = String(tab.url || tab.pendingUrl || "");
-  // about:blank is expected briefly for target=_blank; it is checked again
-  // after navigation before the tab is processed or closed.
-  return url === "about:blank" || isRewardActivityUrl(url, allowedHosts);
+  const hasMatchingOpener = Number(tab.openerTabId) === Number(mainTabId);
+
+  // If it has matching opener, accept about:blank or any reward url.
+  if (hasMatchingOpener) {
+    return url === "about:blank" || isRewardActivityUrl(url, allowedHosts);
+  }
+
+  // Modern browsers strip openerTabId for target="_blank" (rel="noopener").
+  // For newly created tabs without openerTabId, check if it's a reward activity URL.
+  if (tab.openerTabId == null || tab.openerTabId === undefined) {
+    return isRewardActivityUrl(url, allowedHosts);
+  }
+
+  return false;
 }
 
 export { DEFAULT_REWARD_HOSTS };
