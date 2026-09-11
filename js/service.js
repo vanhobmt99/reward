@@ -93,6 +93,7 @@ import {
   isConfirmedBingSearchUrl,
   isCompleteSearchCount,
 } from "/js/search-results.js";
+import { isTabGoneError, listenForTabGone } from "/js/tab-errors.js";
 import {
   DEFAULT_POINTS_PER_SEARCH,
   createSearchCreditGoal,
@@ -1188,6 +1189,7 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
     let resolved = false;
     let timer = null;
     let interruptTimer = null;
+    let stopWatchingRemoved = null;
 
     const done = (success, message = `Tab ${tabId} loaded successfully.`) => {
       if (resolved) return;
@@ -1195,6 +1197,7 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
       clearTimeout(timer);
       clearInterval(interruptTimer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
+      if (stopWatchingRemoved) stopWatchingRemoved();
       logs &&
         log(
           `[WAIT] ${message} (Took ${Date.now() - startTime}ms) - ${
@@ -1231,6 +1234,10 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
 
     chrome.tabs.onUpdated.addListener(onUpdated);
 
+    stopWatchingRemoved = listenForTabGone(chrome.tabs, tabId, () => {
+      done(false, `Tab ${tabId} was closed while waiting to load.`);
+    });
+
     chrome.tabs
       .get(tabId)
       .then((tab) => {
@@ -1239,6 +1246,10 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
         }
       })
       .catch((error) => {
+        if (isTabGoneError(error)) {
+          done(false, `Tab ${tabId} was closed while waiting to load.`);
+          return;
+        }
         log(`[WAIT] Error getting tab ${tabId}: ${error.message}`, "error");
         done(false, `Error getting tab ${tabId}: ${error.message}`);
       });
@@ -3476,6 +3487,7 @@ async function waitForUrl(
     let resolved = false;
     let timer = null;
     let interruptTimer = null;
+    let stopWatchingRemoved = null;
 
     const done = (success, url = "") => {
       if (resolved) return;
@@ -3483,6 +3495,7 @@ async function waitForUrl(
       clearTimeout(timer);
       clearInterval(interruptTimer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
+      if (stopWatchingRemoved) stopWatchingRemoved();
       logs &&
         log(
           `[WAIT URL] ${success ? "Matched" : "Timed out"} for tab ${tabId}: ${url} (${Date.now() - startTime}ms)`,
@@ -3530,6 +3543,15 @@ async function waitForUrl(
     }
 
     chrome.tabs.onUpdated.addListener(onUpdated);
+
+    stopWatchingRemoved = listenForTabGone(chrome.tabs, tabId, () => {
+      done(false, "");
+    });
+
+    chrome.tabs.get(tabId).catch(() => {
+      done(false, "");
+    });
+
     checkCurrentUrl();
   });
 }
@@ -5159,11 +5181,22 @@ async function initialise(
       postSearchResult?.searchSuccessful ?? postSearchResult?.runSuccessful,
     );
   } catch (err) {
-    logs && log(`[INITIALISE] - Unexpected error: ${err.message}`, "error");
-    recordCrash("initialise", err, {
-      expectedSessionId,
-      phase: config?.runtime?.currentPhase,
-    });
+    if (isTabGoneError(err)) {
+      // The automation tab may be closed by the user or discarded by Chrome
+      // between awaited tab operations. End this run cleanly; cleanup below
+      // still clears its session state and badge.
+      logs &&
+        log(
+          `[INITIALISE] - Automation tab ${tabId || "(unknown)"} was closed; ending run.`,
+          "warning",
+        );
+    } else {
+      logs && log(`[INITIALISE] - Unexpected error: ${err.message}`, "error");
+      recordCrash("initialise", err, {
+        expectedSessionId,
+        phase: config?.runtime?.currentPhase,
+      });
+    }
   } finally {
     needPatch = false;
     // Scoped to this run only: a scheduled run starting later must go back to

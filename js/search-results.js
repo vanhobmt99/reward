@@ -24,5 +24,5 @@ export function isConfirmedBingSearchUrl(url, expectedQuery = "") {
 export function isCompleteSearchCount(successful, requested) {
   const expected = Math.max(0, Math.floor(Number(requested) || 0));
   const actual = Math.max(0, Math.floor(Number(successful) || 0));
-  return expected > 0 && actual === expected;
+  return expected > 0 && actual >= expected;
 }

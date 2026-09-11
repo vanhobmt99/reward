@@ -7,14 +7,14 @@ export function createDefaultConfig() {
     search: {
       desk: 31,
       mob: 21,
-      min: 7,
-      max: 14,
+      min: 6,
+      max: 10,
     },
     schedule: {
       desk: 31,
       mob: 21,
-      min: 7,
-      max: 14,
+      min: 6,
+      max: 10,
       mode: "m1",
       // Wall-clock time ("HH:MM", 24h) for the m5 "daily at a fixed time" mode.
       time: "08:00",

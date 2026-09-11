@@ -56,8 +56,8 @@ export function shouldContinueSearch({
   attemptedIterations,
   requestedSearches,
 }) {
-  const attempted = Math.max(0, Number(attemptedIterations) || 0);
-  const requested = Math.max(0, Number(requestedSearches) || 0);
+  const attempted = Math.max(0, Math.floor(Number(attemptedIterations) || 0));
+  const requested = Math.max(0, Math.floor(Number(requestedSearches) || 0));
   return attempted < requested;
 }
 

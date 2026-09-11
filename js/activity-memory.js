@@ -31,10 +31,14 @@ export const MAX_FAILED_ACTIVITY_ATTEMPTS = 4;
 const EXPAND_ATTEMPT_PATTERN =
   /^(?:[a-z-]+\|)?\s*(earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng)\s*$/i;
 
+export function isExpandControlKey(key) {
+  return EXPAND_ATTEMPT_PATTERN.test(String(key || ""));
+}
+
 export function sanitizeActivityAttempts(attempts) {
   return Object.fromEntries(
     Object.entries(attempts || {}).filter(
-      ([key]) => !EXPAND_ATTEMPT_PATTERN.test(key),
+      ([key]) => !isExpandControlKey(key),
     ),
   );
 }
@@ -43,7 +47,7 @@ export function sanitizeActivityConfirmed(confirmed) {
   return Object.fromEntries(
     Object.entries(confirmed || {})
       .filter(
-        ([key, value]) => Boolean(value) && !EXPAND_ATTEMPT_PATTERN.test(key),
+        ([key, value]) => Boolean(value) && !isExpandControlKey(key),
       )
       .map(([key]) => [key, true]),
   );
@@ -79,12 +83,14 @@ export function migrateActivityMemory(memory) {
  */
 export function getBlockedActivityKeys(memory, sessionVisited, options = {}) {
   const { maxFailedAttempts = MAX_FAILED_ACTIVITY_ATTEMPTS } = options || {};
-  const blocked = new Set(sessionVisited || []);
+  const blocked = new Set(
+    [...(sessionVisited || [])].filter((key) => !isExpandControlKey(key)),
+  );
   for (const [key, value] of Object.entries(memory?.confirmed || {})) {
-    if (value) blocked.add(key);
+    if (value && !isExpandControlKey(key)) blocked.add(key);
   }
   for (const [key, count] of Object.entries(memory?.attempts || {})) {
-    if (Number(count) >= maxFailedAttempts) {
+    if (Number(count) >= maxFailedAttempts && !isExpandControlKey(key)) {
       blocked.add(key);
     }
   }
@@ -96,6 +102,7 @@ export function recordActivityFailures(memory, keys) {
   if (!memory) return;
   memory.attempts = memory.attempts || {};
   for (const key of keys || []) {
+    if (isExpandControlKey(key)) continue;
     memory.attempts[key] = (Number(memory.attempts[key]) || 0) + 1;
   }
 }
@@ -112,6 +119,7 @@ export function confirmActivityKeys(
 ) {
   if (memory) memory.confirmed = memory.confirmed || {};
   for (const key of keys || []) {
+    if (isExpandControlKey(key)) continue;
     sessionVisited.add(key);
     sessionMisses.delete(key);
     if (memory) {
@@ -140,6 +148,7 @@ export function markUnconfirmedActivityKeys(
   let retryable = false;
   let blocked = 0;
   for (const key of keys || []) {
+    if (isExpandControlKey(key)) continue;
     const misses = (Number(sessionMisses.get(key)) || 0) + 1;
     sessionMisses.set(key, misses);
     if (misses >= maxMisses) {

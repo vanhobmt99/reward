@@ -1,3 +1,5 @@
+import { hasSearchWork } from "./search-plan.js";
+
 export const SCHEDULE_ALARM_MODES = {
   m3: { min: 300, range: 150 },
   m4: { min: 900, range: 150 },
@@ -10,17 +12,15 @@ export function getScheduleAlarmDelayMs(mode) {
 }
 
 export function isScheduledModeActive(schedule) {
-  // Without a schedule there is nothing to run: the `Number(undefined) !== 0`
-  // (NaN) checks below would otherwise report active for a missing schedule.
+  // Without a schedule there is nothing to run.
   if (!schedule) return false;
   // m5 ("daily at a fixed time") is deliberately NOT "active" here: this
   // predicate gates the run-immediately paths (startup, counter-refresh
   // alarms) and the post-run re-arm. m5 runs ONLY off its own periodic
   // "schedule_daily" alarm — no catch-up runs.
-  return (
-    !["m1", "m2", "m5"].includes(schedule.mode) &&
-    (Number(schedule.desk) !== 0 || Number(schedule.mob) !== 0)
-  );
+  // Counts share hasSearchWork so missing/NaN/sub-1 fractional desk/mob
+  // cannot keep the ~5 min / ~15 min modes armed.
+  return !["m1", "m2", "m5"].includes(schedule.mode) && hasSearchWork(schedule);
 }
 
 // Default wall-clock time for the m5 daily mode ("HH:MM", 24h).

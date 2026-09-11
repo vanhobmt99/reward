@@ -8,6 +8,17 @@ export const DEFAULT_SEARCH_DELAY_MIN = 6;
 export const DEFAULT_SEARCH_DELAY_MAX = 10;
 export const MINIMUM_SEARCH_DELAY = 5;
 
+/**
+ * Integer search count used for remaining-work checks.
+ * Missing, NaN, negative, and sub-1 fractional values are 0 — they must not
+ * count as a search still to run.
+ */
+export function toSearchCount(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return 0;
+  return Math.max(0, Math.floor(number));
+}
+
 // Clamp/normalise a search plan: non-negative integer counts, min delay floored
 // at MINIMUM_SEARCH_DELAY, max never below min. Unknown fields pass through.
 export function normalizeSearchPlan(searches = {}, bounds = {}) {
@@ -17,20 +28,16 @@ export function normalizeSearchPlan(searches = {}, bounds = {}) {
     minimum = MINIMUM_SEARCH_DELAY,
   } = bounds;
 
-  const rawDesk = Number(searches?.desk);
-  const rawMob = Number(searches?.mob);
   const rawMin = Number(searches?.min);
   const rawMax = Number(searches?.max);
 
-  const min = isNaN(rawMin) ? defaultMin : Math.max(minimum, rawMin);
-  let max = isNaN(rawMax) ? defaultMax : rawMax;
+  const min = Number.isFinite(rawMin) ? Math.max(minimum, rawMin) : defaultMin;
+  let max = Number.isFinite(rawMax) ? rawMax : defaultMax;
 
   const plan = {
     ...searches,
-    // Counts drive integer loop bounds, so floor them — a dirty 3.7 must not
-    // become 4 iterations (or feed a fractional value downstream).
-    desk: isNaN(rawDesk) ? 0 : Math.max(0, Math.floor(rawDesk)),
-    mob: isNaN(rawMob) ? 0 : Math.max(0, Math.floor(rawMob)),
+    desk: toSearchCount(searches?.desk),
+    mob: toSearchCount(searches?.mob),
     min,
     max,
   };
@@ -40,7 +47,7 @@ export function normalizeSearchPlan(searches = {}, bounds = {}) {
 }
 
 export function hasSearchWork(searches = {}) {
-  return (Number(searches?.desk) || 0) > 0 || (Number(searches?.mob) || 0) > 0;
+  return toSearchCount(searches?.desk) > 0 || toSearchCount(searches?.mob) > 0;
 }
 
 export function queryTemplateKey(niche, template) {

@@ -50,10 +50,6 @@ function readCounterFieldRaw(item, key) {
   return null;
 }
 
-function readCounterField(item, key) {
-  return readCounterFieldRaw(item, key) ?? 0;
-}
-
 /**
  * Pick the counter entry that describes today's earning state.
  *
@@ -66,14 +62,17 @@ function readCounterField(item, key) {
  *
  * Exported so `progress` and `max` are always read off the SAME entry.
  */
+function counterHasRoom(item) {
+  const max = readCounterFieldRaw(item, "max");
+  const progress = readCounterFieldRaw(item, "progress");
+  return max !== null && progress !== null && max > progress;
+}
+
 export function pickActiveCounter(arr) {
   if (!Array.isArray(arr)) return null;
   const items = arr.filter((item) => item != null);
   if (items.length === 0) return null;
-  const active = items.find(
-    (item) =>
-      readCounterField(item, "max") > readCounterField(item, "progress"),
-  );
+  const active = items.find((item) => counterHasRoom(item));
   if (active) return active;
   // Nothing has room left. Prefer the last entry that actually reports a max:
   // an entry with no readable max describes nothing, and returning it would
@@ -87,7 +86,30 @@ export function pickActiveCounter(arr) {
 }
 
 export function getCounterValue(arr, key) {
-  return readCounterField(pickActiveCounter(arr), key);
+  const active = pickActiveCounter(arr);
+  if (!active) return null;
+  return readCounterFieldRaw(active, key);
+}
+
+/**
+ * True only when the live (still-incomplete) tier is full.
+ * A missing array, empty array, or entry with no readable progress/max is
+ * NOT done — that is unknown quota, not 0/0 "already complete".
+ */
+export function isRewardsSearchCounterComplete(counterArray) {
+  const active = pickActiveCounter(counterArray);
+  if (!active) return false;
+  const progress = readCounterFieldRaw(active, "progress");
+  const max = readCounterFieldRaw(active, "max");
+  if (progress === null || max === null) return false;
+  if (max > 0 && progress < max) return false;
+  const complete = readCounterFieldRaw(active, "complete");
+  if (complete !== null && complete >= 1) return true;
+  return max > 0 && progress >= max;
+}
+
+export function getRewardsSearchCounterDone(counters, name) {
+  return isRewardsSearchCounterComplete(counters?.[name]) ? 1 : 0;
 }
 
 export function sumCounterProgress(counters) {
@@ -95,7 +117,7 @@ export function sumCounterProgress(counters) {
   let total = 0;
   for (const value of Object.values(counters)) {
     if (Array.isArray(value)) {
-      total += getCounterValue(value, "progress");
+      total += getCounterValue(value, "progress") || 0;
     }
   }
   return total;
@@ -142,16 +164,32 @@ export function buildRewardsSnapshot(userStatus) {
 // different metrics when the fallback chain picked differently per snapshot
 // (e.g. availablePoints in one, counterProgress in the other) — a meaningless
 // delta. Falls back to `score` so callers passing bare {score} still work.
+function finiteMetric(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : null;
+}
+
 export function getScoreDelta(before, after) {
   if (!before || !after) return null;
-  for (const field of [
-    "availablePoints",
-    "lifetimePoints",
-    "counterProgress",
-    "score",
-  ]) {
-    if (Number.isFinite(before[field]) && Number.isFinite(after[field])) {
-      return after[field] - before[field];
+  const preferred = ["availablePoints", "lifetimePoints", "counterProgress"];
+  for (const field of preferred) {
+    const previous = finiteMetric(before[field]);
+    const next = finiteMetric(after[field]);
+    if (previous !== null && next !== null) {
+      return next - previous;
+    }
+  }
+  // Collapsed `score` is only safe when neither snapshot has a specific
+  // metric — otherwise the fallback chain may have picked different kinds
+  // of numbers (available vs lifetime) and the subtraction is meaningless.
+  const hasSpecific = (snapshot) =>
+    preferred.some((field) => finiteMetric(snapshot[field]) !== null);
+  if (!hasSpecific(before) && !hasSpecific(after)) {
+    const previous = finiteMetric(before.score);
+    const next = finiteMetric(after.score);
+    if (previous !== null && next !== null) {
+      return next - previous;
     }
   }
   return null;

@@ -30,7 +30,8 @@ export function shouldStopClaimPass({
   pointDelta,
   retry,
 } = {}) {
-  if (Number.isFinite(pointDelta) && pointDelta > 0) return true;
+  const delta = Number(pointDelta);
+  if (Number.isFinite(delta) && delta > 0) return true;
   if (retry) return false;
   return !clicked || count === 0;
 }

@@ -45,7 +45,8 @@
     "*://login.live.com/*",
     "*://login.microsoftonline.com/*",
     "*://account.microsoft.com/*",
-    "*://rewards.bing.com/*"
+    "*://rewards.bing.com/*",
+    "*://login.windows.net/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"
