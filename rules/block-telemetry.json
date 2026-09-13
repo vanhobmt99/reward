@@ -1,0 +1,17 @@
+[
+  {
+    "id": 1,
+    "priority": 1,
+    "action": { "type": "block" },
+    "condition": {
+      "requestDomains": [
+        "df.cfp.microsoft.com",
+        "clarity.ms",
+        "browser.events.data.microsoft.com",
+        "browser.events.data.msn.com",
+        "self.events.data.microsoft.com",
+        "mobile.events.data.microsoft.com"
+      ]
+    }
+  }
+]

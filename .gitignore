@@ -14,6 +14,7 @@ desktop.ini
 # Local agent/tooling scratch dirs (not part of the extension)
 agent-tools/
 terminals/
+_probe/
 
 # Stray dir created when a shell fails to expand "~" (e.g. a botched clone).
 # The real reference lives at $HOME/refs, not inside the repo.
