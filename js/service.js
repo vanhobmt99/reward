@@ -386,6 +386,7 @@ function clearActiveRuntimeState(reason = "stale_runtime") {
   config.runtime.act = 0;
   config.runtime.mobile = 0;
   config.runtime.rsaTab = null;
+  config.runtime.rsaWindowId = null;
   logs && log(`[RUNTIME] - Cleared ${reason} active runtime state.`, "warning");
   return true;
 }
@@ -409,26 +410,28 @@ async function applyStoredConfig(stored, reason = "load") {
     return false;
   }
   if (hadLiveInMemoryRun) return false;
-  // Capture the orphaned automation tab BEFORE clearActiveRuntimeState nulls it,
-  // so we can detach its debugger and close it after a worker death.
+  // Capture the orphaned automation tab and dedicated window BEFORE
+  // clearActiveRuntimeState nulls them, so we can detach and close them.
   const staleTab = Number(config?.runtime?.rsaTab) || null;
+  const staleWindow = Number(config?.runtime?.rsaWindowId) || null;
   const cleared = clearActiveRuntimeState(`${reason} stale session`);
   if (cleared || countersReset) {
     await set(config);
   }
   if (cleared) {
-    await cleanupStaleRun(staleTab);
+    await cleanupStaleRun(staleTab, staleWindow);
   }
   return cleared;
 }
 
 // Recover from a service worker that died mid-run: restore any login cookies we
 // had cleared for the mobile phase, then detach the debugger from and close the
-// orphaned automation tab so its "being debugged" banner and mobile emulation
+// orphaned automation tab/window so its "being debugged" banner and mobile emulation
 // don't linger.
-async function cleanupStaleRun(staleTab) {
+async function cleanupStaleRun(staleTab, staleWindow = null) {
   await restorePendingAuthCookies();
   staleTab = Number(staleTab) || null;
+  staleWindow = Number(staleWindow) || null;
   if (staleTab) {
     try {
       await chrome.debugger.detach({ tabId: staleTab });
@@ -444,6 +447,18 @@ async function cleanupStaleRun(staleTab) {
         );
     } catch (error) {
       /* tab already closed */
+    }
+  }
+  if (staleWindow) {
+    try {
+      await chrome.windows.remove(staleWindow);
+      logs &&
+        log(
+          `[RECOVERY] Closed orphaned automation window ${staleWindow}.`,
+          "warning",
+        );
+    } catch (error) {
+      /* window already closed */
     }
   }
 }
@@ -1436,6 +1451,7 @@ async function handleUserStop() {
     searchKeepaliveCancel = null;
   }
   const rsaTab = Number(config?.runtime?.rsaTab);
+  const rsaWindowId = Number(config?.runtime?.rsaWindowId);
   await RunCoordinator.stopCurrentSession("user_requested");
   if (rsaTab) {
     await detach(rsaTab, false).catch(() => {});
@@ -1445,6 +1461,14 @@ async function handleUserStop() {
       logs &&
         log(`[STOP] Could not close RSA tab: ${error.message}`, "warning");
     }
+  }
+  if (rsaWindowId) {
+    try {
+      await chrome.windows.remove(rsaWindowId);
+    } catch (error) {
+      /* window already closed */
+    }
+    config.runtime.rsaWindowId = null;
   }
   config.runtime.rsaTab = null;
   config.runtime.mobile = 0;
@@ -2111,7 +2135,22 @@ async function click(interruptible = true) {
   let success = false;
   try {
     await enableDomains(tabId);
-    const selector = config?.runtime?.mobile ? "#mHamburger" : ".b_clickarea";
+    const candidateSelectors = config?.runtime?.mobile
+      ? [
+          "#mHamburger",
+          "#dots_overflow_menu_container",
+          "#HBContent",
+          "[aria-label*='menu' i]",
+        ]
+      : [
+          "#id_s",
+          "#id_l",
+          "a.id_button#id_l",
+          "a.id_button",
+          "#b_idProviders",
+          "#id_rh_w",
+          ".b_clickarea",
+        ];
 
     const { root: documentNode } = await race(
       chrome.debugger.sendCommand({ tabId }, "DOM.getDocument"),
@@ -2125,131 +2164,140 @@ async function click(interruptible = true) {
       return false;
     }
 
-    const { nodeId } = await race(
-      chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
-        nodeId: documentNode.nodeId,
-        selector: selector,
-      }),
-      shortestDelay,
-      `Failed to query selector "${selector}" for tab ${tabId} within timeout.`,
-    );
+    let nodeId = null;
+    let chosenSelector = null;
+    for (const sel of candidateSelectors) {
+      try {
+        const query = await race(
+          chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
+            nodeId: documentNode.nodeId,
+            selector: sel,
+          }),
+          shortestDelay,
+        );
+        if (query?.nodeId) {
+          nodeId = query.nodeId;
+          chosenSelector = sel;
+          break;
+        }
+      } catch (_) {}
+    }
+
     if (!nodeId) {
       logs &&
         log(
-          `[CLICK] - Failed to get node ID for selector "${selector}" in tab ${tabId}.`,
-          "error",
+          `[CLICK] - No target node found via CDP selectors in tab ${tabId}; delegating to content script.`,
+          "warning",
         );
-      return false;
-    }
-
-    await race(
-      chrome.debugger.sendCommand({ tabId }, "DOM.scrollIntoViewIfNeeded", {
-        nodeId: nodeId,
-      }),
-      shortestDelay,
-      `Failed to scroll into view for node ID ${nodeId} in tab ${tabId} within timeout.`,
-    );
-    await delay(shortestDelay, interruptible);
-
-    const { model } = await race(
-      chrome.debugger.sendCommand({ tabId }, "DOM.getBoxModel", {
-        nodeId: nodeId,
-      }),
-      shortestDelay,
-      `Failed to get box model for node ID ${nodeId} in tab ${tabId} within timeout.`,
-    );
-    if (!model || !Array.isArray(model.content) || model.content.length < 6) {
-      logs &&
-        log(
-          `[CLICK] - Invalid box model for node ID ${nodeId} in tab ${tabId}.`,
-          "error",
-        );
-      return false;
-    }
-
-    const quad = model.content;
-    const x = (quad[0] + quad[2]) / 2;
-    const y = (quad[1] + quad[5]) / 2;
-    logs &&
-      log(
-        `[CLICK] - Click coordinates for tab ${tabId}: (${x}, ${y})`,
-        "update",
-      );
-
-    if (config?.runtime?.mobile) {
+    } else {
       await race(
-        chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
-          type: "touchStart",
-          touchPoints: [
-            {
+        chrome.debugger.sendCommand({ tabId }, "DOM.scrollIntoViewIfNeeded", {
+          nodeId: nodeId,
+        }),
+        shortestDelay,
+        `Failed to scroll into view for node ID ${nodeId} in tab ${tabId} within timeout.`,
+      ).catch(() => {});
+      await delay(shortestDelay, interruptible);
+
+      const { model } = await race(
+        chrome.debugger.sendCommand({ tabId }, "DOM.getBoxModel", {
+          nodeId: nodeId,
+        }),
+        shortestDelay,
+        `Failed to get box model for node ID ${nodeId} in tab ${tabId} within timeout.`,
+      ).catch(() => ({}));
+      if (!model || !Array.isArray(model.content) || model.content.length < 6) {
+        logs &&
+          log(
+            `[CLICK] - Invalid box model for node ID ${nodeId} in tab ${tabId}; delegating to content script.`,
+            "warning",
+          );
+      } else {
+        const quad = model.content;
+        const x = (quad[0] + quad[2]) / 2;
+        const y = (quad[1] + quad[5]) / 2;
+        logs &&
+          log(
+            `[CLICK] - Click coordinates for tab ${tabId} (${chosenSelector}): (${x}, ${y})`,
+            "update",
+          );
+
+        if (config?.runtime?.mobile) {
+          await race(
+            chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
+              type: "touchStart",
+              touchPoints: [
+                {
+                  x,
+                  y,
+                  radiusX: 5,
+                  radiusY: 5,
+                  force: 0.5,
+                },
+              ],
+            }),
+            shortestDelay,
+            `Failed to dispatch touch event for tab ${tabId} within timeout.`,
+          );
+        } else {
+          // Move the cursor toward the target along a human-like curved path,
+          // emitting several intermediate mouseMoved events, before pressing.
+          const path = generateMousePath(lastMouseX, lastMouseY, x, y);
+          for (const point of path) {
+            await race(
+              chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+                type: "mouseMoved",
+                x: point.x,
+                y: point.y,
+              }),
+              shortestDelay,
+            ).catch(() => {}); // ignore transient path errors, keep moving
+            await delay(8 + Math.random() * 12, interruptible);
+          }
+          lastMouseX = x;
+          lastMouseY = y;
+          await delay(80 + Math.random() * 120, interruptible);
+          await race(
+            chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mousePressed",
+              button: "left",
               x,
               y,
-              radiusX: 5,
-              radiusY: 5,
-              force: 0.5,
-            },
-          ],
-        }),
-        shortestDelay,
-        `Failed to dispatch touch event for tab ${tabId} within timeout.`,
-      );
-    } else {
-      // Move the cursor toward the target along a human-like curved path,
-      // emitting several intermediate mouseMoved events, before pressing.
-      const path = generateMousePath(lastMouseX, lastMouseY, x, y);
-      for (const point of path) {
-        await race(
-          chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-            type: "mouseMoved",
-            x: point.x,
-            y: point.y,
-          }),
-          shortestDelay,
-        ).catch(() => {}); // ignore transient path errors, keep moving
-        await delay(8 + Math.random() * 12, interruptible);
+              clickCount: 1,
+            }),
+            shortestDelay,
+            `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
+          );
+        }
+        await delay(80 + Math.random() * 120, interruptible);
+        if (config?.runtime?.mobile) {
+          await race(
+            chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
+              type: "touchEnd",
+              touchPoints: [],
+            }),
+            shortestDelay,
+            `Failed to dispatch touch event for tab ${tabId} within timeout.`,
+          );
+        } else {
+          await race(
+            chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+              type: "mouseReleased",
+              button: "left",
+              x,
+              y,
+              clickCount: 1,
+            }),
+            shortestDelay,
+            `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
+          );
+        }
+        logs &&
+          log(`[CLICK] - Click operation completed for tab ${tabId}.`, "success");
+        await delay(shortestDelay, interruptible);
+        success = true;
       }
-      lastMouseX = x;
-      lastMouseY = y;
-      await delay(80 + Math.random() * 120, interruptible);
-      await race(
-        chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-          type: "mousePressed",
-          button: "left",
-          x,
-          y,
-          clickCount: 1,
-        }),
-        shortestDelay,
-        `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
-      );
     }
-    await delay(80 + Math.random() * 120, interruptible);
-    if (config?.runtime?.mobile) {
-      await race(
-        chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
-          type: "touchEnd",
-          touchPoints: [],
-        }),
-        shortestDelay,
-        `Failed to dispatch touch event for tab ${tabId} within timeout.`,
-      );
-    } else {
-      await race(
-        chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-          type: "mouseReleased",
-          button: "left",
-          x,
-          y,
-          clickCount: 1,
-        }),
-        shortestDelay,
-        `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
-      );
-    }
-    logs &&
-      log(`[CLICK] - Click operation completed for tab ${tabId}.`, "success");
-    await delay(shortestDelay, interruptible);
-    success = true;
   } catch (error) {
     log(`[CLICK] - Error during click operation: ${error.message}`, "error");
   }
@@ -2617,6 +2665,110 @@ function isBingPageUrl(url) {
     return host === "bing.com" || host.endsWith(".bing.com");
   } catch {
     return false;
+  }
+}
+
+/**
+ * Simulates human-like organic interaction on the Bing SERP:
+ * 1. Natural smooth scroll down to scan results (300-720px).
+ * 2. Natural reading pause (1.4s - 3.0s).
+ * 3. Occasional secondary scroll adjustment (up/down).
+ * 4. ~25% probability of clicking an organic, non-ad result into a background tab,
+ *    dwelling for 2-3.5s, before stabilizeAfterSearch cleans it up.
+ */
+async function simulateOrganicSerpInteraction(tabId, interruptible = true) {
+  if (config?.control?.organicSerp === 0) return;
+  tabId = Number(tabId);
+  if (!tabId) return;
+
+  try {
+    const currentUrl = await getTabUrl(tabId);
+    if (
+      !currentUrl ||
+      !isBingPageUrl(currentUrl) ||
+      !currentUrl.includes("/search")
+    ) {
+      return;
+    }
+
+    // 1. Initial short pause to simulate user taking in the results page
+    await delay(Math.floor(400 + Math.random() * 400), interruptible);
+
+    // 2. Smooth scroll down to browse search results
+    const scrollDown = Math.floor(300 + Math.random() * 420);
+    await chrome.debugger
+      .sendCommand({ tabId }, "Runtime.evaluate", {
+        expression: `window.scrollBy({ top: ${scrollDown}, behavior: 'smooth' });`,
+      })
+      .catch(() => {});
+
+    // 3. Human reading pause
+    const readingPause = Math.floor(1400 + Math.random() * 1600);
+    await delay(readingPause, interruptible);
+
+    // 4. Occasional minor scroll adjustment (50% chance)
+    if (Math.random() < 0.5) {
+      const adjustment = Math.floor((Math.random() - 0.3) * 250);
+      await chrome.debugger
+        .sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: `window.scrollBy({ top: ${adjustment}, behavior: 'smooth' });`,
+        })
+        .catch(() => {});
+      await delay(Math.floor(600 + Math.random() * 700), interruptible);
+    }
+
+    // 5. Natural organic result click (~25% probability)
+    const shouldClickOrganic = Math.random() < 0.25;
+    if (shouldClickOrganic) {
+      const clickRes = await chrome.debugger
+        .sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: `(() => {
+            try {
+              const organicLinks = Array.from(
+                document.querySelectorAll('#b_results .b_algo h2 a, #b_results .b_algo .b_title a')
+              );
+              const eligible = organicLinks.filter((a) => {
+                const href = a?.href || '';
+                return (
+                  href.startsWith('http') &&
+                  !href.includes('bing.com') &&
+                  !href.includes('microsoft.com') &&
+                  !href.includes('live.com') &&
+                  !a.closest('.b_ad, [data-clarity]')
+                );
+              });
+              if (eligible.length === 0) return null;
+              // Choose among top 3 results
+              const chosen = eligible[Math.floor(Math.random() * Math.min(eligible.length, 3))];
+              const rect = chosen.getBoundingClientRect();
+              if (rect.width > 0 && rect.height > 0) {
+                chosen.target = '_blank';
+                chosen.click();
+                return chosen.href;
+              }
+              return null;
+            } catch (e) {
+              return null;
+            }
+          })()`,
+          returnByValue: true,
+        })
+        .catch(() => null);
+
+      const clickedUrl = clickRes?.result?.value;
+      if (clickedUrl) {
+        logs &&
+          log(
+            `[SEARCH] Organic interaction: visited ${clickedUrl.slice(0, 48)}...`,
+            "update",
+          );
+        // Dwell 2-3.5s on the result page like a real user
+        const dwellTime = Math.floor(2000 + Math.random() * 1500);
+        await delay(dwellTime, interruptible);
+      }
+    }
+  } catch (error) {
+    // Best-effort only — never interrupt a successful search
   }
 }
 
@@ -3370,7 +3522,9 @@ async function search(searches, min, max, interruptible = true) {
             "success",
           );
       }
-      // No organic result clicks — only clean up ad/popup tabs and keep RSA on Bing.
+      if (searched) {
+        await simulateOrganicSerpInteraction(tabId, interruptible);
+      }
       await stabilizeAfterSearch(tabId, tabsBeforeSearch, interruptible);
       await set(config);
       await updateProgressBadge();
@@ -3623,14 +3777,31 @@ async function completeRewardActivityTab(tabId) {
         break;
       }
       const freshPoint = await refreshSolvePressPoint(tabId, value.targetKey);
-      if (
-        !value.pressPoint ||
-        !freshPoint ||
-        !(await dispatchTrustedPress(tabId, freshPoint, "ACTIVITY SOLVER"))
-      ) {
+      let pressed = false;
+      if (value.pressPoint && freshPoint) {
+        pressed = await dispatchTrustedPress(tabId, freshPoint, "ACTIVITY SOLVER");
+      }
+      if (!pressed) {
         logs &&
           log(
-            `[ACTIVITY] Reward tab ${tabId} target moved before the trusted click.`,
+            `[ACTIVITY] Reward tab ${tabId} target moved or CDP point stale; fallback to direct solve click.`,
+            "warning",
+          );
+        const fallbackRes = await race(
+          chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+            expression: createSolveActivityScript(false),
+            returnByValue: true,
+          }),
+          mediumDelay,
+        ).catch(() => null);
+        if (fallbackRes?.result?.value?.clicked) {
+          pressed = true;
+        }
+      }
+      if (!pressed) {
+        logs &&
+          log(
+            `[ACTIVITY] Reward tab ${tabId} target could not be clicked.`,
             "warning",
           );
         break;
@@ -4052,20 +4223,33 @@ async function runDashboardActivityPass(
       value.openedKeys?.[0],
       "DAILY SET",
     );
-    if (!freshPoint) {
-      logs &&
-        log(
-          `[ACTIVITY] Pass ${pass} daily-set target became stale before click.`,
-          "warning",
-        );
-      clickedItems = [];
-    } else {
-      const pressed = await dispatchTrustedPress(
+    let pressed = false;
+    if (freshPoint) {
+      pressed = await dispatchTrustedPress(
         tabId,
         freshPoint,
         "DAILY SET",
       );
-      if (!pressed) clickedItems = [];
+    }
+    if (!pressed) {
+      logs &&
+        log(
+          `[ACTIVITY] Pass ${pass} daily-set target point stale or press failed; fallback to direct DOM click.`,
+          "warning",
+        );
+      const fallbackResult = await race(
+        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: createDashboardActivityScript([...blockedKeys], 1, false),
+          returnByValue: true,
+        }),
+        mediumDelay,
+      ).catch(() => null);
+      const fallbackVal = fallbackResult?.result?.value;
+      if (fallbackVal?.clicked?.length) {
+        clickedItems = fallbackVal.clicked;
+      } else {
+        clickedItems = [];
+      }
     }
   }
   if (value.reason) {
@@ -4233,20 +4417,33 @@ async function runEarnActivityPass(
       value.openedKeys?.[0],
       "KEEP EARNING",
     );
-    if (!freshPoint) {
-      logs &&
-        log(
-          `[ACTIVITY] Pass ${pass} Keep-earning target became stale before click.`,
-          "warning",
-        );
-      clickedItems = [];
-    } else {
-      const pressed = await dispatchTrustedPress(
+    let pressed = false;
+    if (freshPoint) {
+      pressed = await dispatchTrustedPress(
         tabId,
         freshPoint,
         "KEEP EARNING",
       );
-      if (!pressed) clickedItems = [];
+    }
+    if (!pressed) {
+      logs &&
+        log(
+          `[ACTIVITY] Pass ${pass} Keep-earning target point stale or press failed; fallback to direct DOM click.`,
+          "warning",
+        );
+      const fallbackResult = await race(
+        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: createEarnActivityScript([...blockedKeys], 1, false),
+          returnByValue: true,
+        }),
+        mediumDelay,
+      ).catch(() => null);
+      const fallbackVal = fallbackResult?.result?.value;
+      if (fallbackVal?.clicked?.length) {
+        clickedItems = fallbackVal.clicked;
+      } else {
+        clickedItems = [];
+      }
     }
   }
   if (value.reason) {
@@ -5067,14 +5264,51 @@ async function initialise(
     // Only prepare live topics when this run will actually perform searches.
     // Activity-only sessions should not contact external topic providers.
     resetSearchQueryHistory();
-    const rsaTab = await chrome.tabs.create({ url: bing, active: true });
+    let rsaTab = null;
+    let rsaWindowId = null;
+    try {
+      if (typeof chrome.windows?.create === "function") {
+        const win = await chrome.windows.create({
+          url: bing,
+          focused: false,
+          width: 1024,
+          height: 768,
+          type: "normal",
+        });
+        if (win?.id) {
+          rsaWindowId = Number(win.id);
+          config.runtime.rsaWindowId = rsaWindowId;
+          if (win.tabs && win.tabs.length > 0) {
+            rsaTab = win.tabs[0];
+          } else {
+            const tabsInWin = await chrome.tabs.query({ windowId: rsaWindowId });
+            if (tabsInWin.length > 0) {
+              rsaTab = tabsInWin[0];
+            }
+          }
+        }
+      }
+    } catch (err) {
+      logs &&
+        log(
+          `[INITIALISE] Dedicated window creation failed (${err?.message}); falling back to new tab.`,
+          "warning",
+        );
+    }
+    if (!rsaTab) {
+      rsaTab = await chrome.tabs.create({ url: bing, active: false });
+    }
     tabId = Number(rsaTab.id);
     config.runtime.rsaTab = tabId;
     config.runtime.total = searches.desk + searches.mob;
     await wait(tabId);
     await delay(shortestDelay, true);
 
-    logs && log(`[INITIALISE] - Created new tab with ID: ${tabId}`, "update");
+    logs &&
+      log(
+        `[INITIALISE] - Created new automation tab ${tabId}${rsaWindowId ? ` in dedicated window ${rsaWindowId}` : ""}`,
+        "update",
+      );
 
     await chrome.tabs.update(tabId, { autoDiscardable: false });
     await set(config);
@@ -5218,6 +5452,13 @@ async function initialise(
       isScheduledModeActive: () => isScheduledModeActive(),
       notifyFn: notifyOnFinish ? notifyScheduledRunFinished : undefined,
     });
+    const rsaWin = Number(config?.runtime?.rsaWindowId) || null;
+    if (rsaWin) {
+      try {
+        await chrome.windows.remove(rsaWin);
+      } catch (e) {}
+      config.runtime.rsaWindowId = null;
+    }
   }
 
   return runSucceeded;
