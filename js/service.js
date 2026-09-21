@@ -2143,7 +2143,6 @@ async function click(interruptible = true) {
           "[aria-label*='menu' i]",
         ]
       : [
-          "#id_s",
           "#id_l",
           "a.id_button#id_l",
           "a.id_button",
@@ -2164,8 +2163,40 @@ async function click(interruptible = true) {
       return false;
     }
 
+    // A selector existing in the DOM is not enough: Bing retains hidden
+    // compatibility nodes such as #id_s at 0×0. Only select a target after its
+    // visible box and hit-test point have both been verified.
+    const getVerifiedPoint = async (nodeId, selector) => {
+      const { model } = await race(
+        chrome.debugger.sendCommand({ tabId }, "DOM.getBoxModel", { nodeId }),
+        shortestDelay,
+        `Failed to get box model for node ID ${nodeId} within timeout.`,
+      ).catch(() => ({}));
+      const quad = model?.content;
+      if (!Array.isArray(quad) || quad.length < 8) return null;
+      const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number);
+      const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number);
+      if (![...xs, ...ys].every(Number.isFinite)) return null;
+      const left = Math.min(...xs);
+      const right = Math.max(...xs);
+      const top = Math.min(...ys);
+      const bottom = Math.max(...ys);
+      if (right - left < 8 || bottom - top < 8) return null;
+      const x = (left + right) / 2;
+      const y = (top + bottom) / 2;
+      const probe = await race(
+        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
+          expression: `(() => { const target = document.querySelector(${JSON.stringify(selector)}); const hit = document.elementFromPoint(${JSON.stringify(x)}, ${JSON.stringify(y)}); return Boolean(target && hit && (target === hit || target.contains(hit))); })()`,
+          returnByValue: true,
+        }),
+        shortestDelay,
+      ).catch(() => null);
+      return probe?.result?.value ? { x, y } : null;
+    };
+
     let nodeId = null;
     let chosenSelector = null;
+    let point = null;
     for (const sel of candidateSelectors) {
       try {
         const query = await race(
@@ -2175,11 +2206,23 @@ async function click(interruptible = true) {
           }),
           shortestDelay,
         );
-        if (query?.nodeId) {
-          nodeId = query.nodeId;
-          chosenSelector = sel;
-          break;
+        if (!query?.nodeId) continue;
+        await race(
+          chrome.debugger.sendCommand({ tabId }, "DOM.scrollIntoViewIfNeeded", {
+            nodeId: query.nodeId,
+          }),
+          shortestDelay,
+        ).catch(() => {});
+        await delay(shortestDelay, interruptible);
+        const candidatePoint = await getVerifiedPoint(query.nodeId, sel);
+        if (!candidatePoint) {
+          logs && log(`[CLICK] - Skipping hidden, covered, or stale target ${sel}.`, "warning");
+          continue;
         }
+        nodeId = query.nodeId;
+        chosenSelector = sel;
+        point = candidatePoint;
+        break;
       } catch (_) {}
     }
 
@@ -2190,32 +2233,8 @@ async function click(interruptible = true) {
           "warning",
         );
     } else {
-      await race(
-        chrome.debugger.sendCommand({ tabId }, "DOM.scrollIntoViewIfNeeded", {
-          nodeId: nodeId,
-        }),
-        shortestDelay,
-        `Failed to scroll into view for node ID ${nodeId} in tab ${tabId} within timeout.`,
-      ).catch(() => {});
-      await delay(shortestDelay, interruptible);
-
-      const { model } = await race(
-        chrome.debugger.sendCommand({ tabId }, "DOM.getBoxModel", {
-          nodeId: nodeId,
-        }),
-        shortestDelay,
-        `Failed to get box model for node ID ${nodeId} in tab ${tabId} within timeout.`,
-      ).catch(() => ({}));
-      if (!model || !Array.isArray(model.content) || model.content.length < 6) {
-        logs &&
-          log(
-            `[CLICK] - Invalid box model for node ID ${nodeId} in tab ${tabId}; delegating to content script.`,
-            "warning",
-          );
-      } else {
-        const quad = model.content;
-        const x = (quad[0] + quad[2]) / 2;
-        const y = (quad[1] + quad[5]) / 2;
+      if (point) {
+        let { x, y } = point;
         logs &&
           log(
             `[CLICK] - Click coordinates for tab ${tabId} (${chosenSelector}): (${x}, ${y})`,
@@ -2223,6 +2242,9 @@ async function click(interruptible = true) {
           );
 
         if (config?.runtime?.mobile) {
+          point = await getVerifiedPoint(nodeId, chosenSelector);
+          if (!point) throw new Error("Mobile click target moved or became covered.");
+          ({ x, y } = point);
           await race(
             chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
               type: "touchStart",
@@ -2257,6 +2279,9 @@ async function click(interruptible = true) {
           lastMouseX = x;
           lastMouseY = y;
           await delay(80 + Math.random() * 120, interruptible);
+          point = await getVerifiedPoint(nodeId, chosenSelector);
+          if (!point) throw new Error("Click target moved or became covered.");
+          ({ x, y } = point);
           await race(
             chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
               type: "mousePressed",

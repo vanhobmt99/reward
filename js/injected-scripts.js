@@ -233,24 +233,18 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				const hit = points
 					.map(([x, y]) => ({ x, y, element: document.elementFromPoint(x, y) }))
 					.find((point) => point.element && (target.contains(point.element) || target === point.element));
-				// No hit means an overlay/toast covers every probe point, or the layout
-				// shifted after measuring. Instead of dropping the card (a silent click
-				// miss), fall back to dispatching directly on the target: synthetic
-				// events + target.click() work regardless of what elementFromPoint sees.
-				const x = hit ? hit.x : centerX;
-				const y = hit ? hit.y : centerY;
-				const eventTarget = hit ? hit.element : target;
-				if (deferToCdp) {
-					if (hit) {
-						pressPoint = { x, y };
-						return true;
-					}
-					// Covered/stale coordinates must fail closed. A synthetic click is
-					// ignored by React Aria often enough to poison click bookkeeping, and
-					// a trusted press here would hit the overlay instead. Leaving the card
-					// unvisited lets popup dismissal / a later pass retry it.
+				// A covered target must fail closed. Dispatching synthetic events directly
+				// on it can mark work as handled while the visible UI never received it.
+				if (!hit) {
 					pressPoint = null;
 					return false;
+				}
+				const x = hit.x;
+				const y = hit.y;
+				const eventTarget = hit.element;
+				if (deferToCdp) {
+					pressPoint = { x, y };
+					return true;
 				}
 				try {
 					target.focus?.({ preventScroll: true });
@@ -1277,9 +1271,10 @@ export function createClaimReadyScript(
 					const hit = points
 						.map(([x, y]) => ({ x, y, element: document.elementFromPoint?.(x, y) }))
 						.find((point) => point.element && (el === point.element || el.contains(point.element)));
-					if (deferToCdp) return hit ? { x: hit.x, y: hit.y } : null;
-					const x = hit?.x ?? cx;
-					const y = hit?.y ?? cy;
+					if (!hit) return null;
+					if (deferToCdp) return { x: hit.x, y: hit.y };
+					const x = hit.x;
+					const y = hit.y;
 					const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
 					const pbase = Object.assign({}, base, { pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 });
 					const up = { buttons: 0 };
