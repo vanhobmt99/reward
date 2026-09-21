@@ -52,3 +52,13 @@ Không cài chồng một thư mục ZIP khác rồi bỏ lại thư mục cũ: 
 ## Lưu ý
 
 Việc sử dụng Microsoft Rewards cần tuân theo điều khoản của Microsoft. Extension không bảo đảm điểm thưởng, không nên dùng để xử lý thông tin nhạy cảm và chỉ nên cài từ nguồn bạn tin cậy.
+
+## Ủng hộ dự án
+
+Nếu extension hữu ích, bạn có thể ủng hộ tác giả qua MoMo. Quét mã hoặc chuyển đến số **0326363942**.
+
+<p align="center">
+  <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&amp;data=MOMO%3A0326363942" alt="Mã QR ủng hộ MoMo 0326363942" width="220" height="220" />
+</p>
+
+<p align="center"><strong>MoMo: 0326363942</strong></p>
