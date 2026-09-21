@@ -144,10 +144,6 @@ const limitsMap = {
   searchMob: { min: 0, max: 300 },
   searchMin: { min: 5, max: 600 },
   searchMax: { min: 8, max: 900 },
-  scheduleDesk: { min: 0, max: 300 },
-  scheduleMob: { min: 0, max: 300 },
-  scheduleMin: { min: 5, max: 600 },
-  scheduleMax: { min: 8, max: 900 },
 };
 const $searchDesk = $("#searchDesk");
 const $searchMob = $("#searchMob");
@@ -156,17 +152,14 @@ const $searchMax = $("#searchMax");
 const $searchMode = $("#searchMode");
 const $searchModeA = $("#searchMode a");
 const $searchTrigger = $("#searchTrigger");
-const $scheduleDesk = $("#scheduleDesk");
-const $scheduleMob = $("#scheduleMob");
-const $scheduleMin = $("#scheduleMin");
-const $scheduleMax = $("#scheduleMax");
 const $scheduleMode = $("#scheduleMode");
 const $scheduleModeA = $("#scheduleMode a");
 const $scheduleTrigger = $("#scheduleTrigger");
 const $scheduleTime = $("#scheduleTime");
 const $scheduleTimeRow = $("#scheduleTimeRow");
 const $scheduleTimeHint = $("#scheduleTimeHint");
-const $version = $("#version");
+const $scheduleSummary = $("#scheduleSummary");
+const $planSummary = $("#planSummary");
 const $deviceName = $("#deviceName");
 const $resetDevice = $("#resetDevice");
 const $clear = $("#clear");
@@ -270,10 +263,9 @@ async function updateUI() {
   $searchMin.val(config.search.min);
   $searchMax.val(config.search.max);
   compare();
-  $scheduleDesk.val(config.schedule.desk);
-  $scheduleMob.val(config.schedule.mob);
-  $scheduleMin.val(config.schedule.min);
-  $scheduleMax.val(config.schedule.max);
+  $planSummary.text(
+    `${config.search.desk} máy tính · ${config.search.mob} điện thoại`,
+  );
   $scheduleModeA.removeClass("active");
   $scheduleMode.find(`.${config.schedule.mode}`).addClass("active");
   // The daily-time row only matters in m5 mode.
@@ -304,6 +296,14 @@ async function updateUI() {
       // chrome.alarms unavailable (e.g. test env) — keep the static hint.
     }
   }
+  const scheduleLabels = {
+    m1: "Thủ công",
+    m2: "Khi mở trình duyệt",
+    m3: "Mỗi ~5 phút",
+    m4: "Mỗi ~15 phút",
+    m5: `Hằng ngày ${config?.schedule?.time || "08:00"}`,
+  };
+  $scheduleSummary.text(scheduleLabels[config?.schedule?.mode] || "Thủ công");
   if (config?.runtime?.running) {
     $searchTrigger.text("Dừng").addClass("stopping");
     $scheduleTrigger.text("Dừng").addClass("stopping");
@@ -389,10 +389,6 @@ async function updateUI() {
     "#searchMob",
     "#searchMin",
     "#searchMax",
-    "#scheduleDesk",
-    "#scheduleMob",
-    "#scheduleMin",
-    "#scheduleMax",
     "#scheduleTime",
   ];
 
@@ -576,6 +572,15 @@ async function persistSearchForm() {
         ...next.search,
         ...search,
       };
+      // Scheduled runs use this same plan. Keep the persisted schedule payload
+      // synchronized so an already-armed alarm never runs stale counts.
+      next.schedule = {
+        ...next.schedule,
+        desk: search.desk,
+        mob: search.mob,
+        min: search.min,
+        max: search.max,
+      };
     });
     return { ...config.search };
   } catch (err) {
@@ -589,14 +594,13 @@ async function persistSearchForm() {
 }
 async function persistScheduleForm() {
   try {
-    const min = readLimitedNumber($scheduleMin, "scheduleMin");
-    const max = Math.max(min, readLimitedNumber($scheduleMax, "scheduleMax"));
+    const plan = await persistSearchForm();
     const schedule = {
       ...(config.schedule || {}),
-      desk: readLimitedNumber($scheduleDesk, "scheduleDesk"),
-      mob: readLimitedNumber($scheduleMob, "scheduleMob"),
-      min,
-      max,
+      desk: plan.desk,
+      mob: plan.mob,
+      min: plan.min,
+      max: plan.max,
       // "HH:MM" from the <input type=time>; service normalizes invalid values.
       time: $scheduleTime.val() || config?.schedule?.time || "08:00",
     };
@@ -617,7 +621,6 @@ async function persistScheduleForm() {
   }
 }
 $(document).ready(async function () {
-  $version.val(chrome.runtime.getManifest().version);
   // Derive a UI scale from the display, but clamp it: an unclamped value blows
   // the popup up to ~2x on 4K screens and shrinks it on small laptops, so the
   // popup size was effectively random per-monitor.
@@ -677,12 +680,14 @@ $(document).ready(async function () {
     const desk = readLimitedNumber($(this), "searchDesk");
     await saveConfigMutation((next) => {
       next.search.desk = desk;
+      next.schedule.desk = desk;
     });
   });
   $searchMob.on("change", async function () {
     const mob = readLimitedNumber($(this), "searchMob");
     await saveConfigMutation((next) => {
       next.search.mob = mob;
+      next.schedule.mob = mob;
     });
   });
   $searchMin.on("change", async function () {
@@ -695,6 +700,7 @@ $(document).ready(async function () {
     }
     await saveConfigMutation((next) => {
       Object.assign(next.search, patch);
+      Object.assign(next.schedule, patch);
     });
   });
   $searchMax.on("change", async function () {
@@ -707,6 +713,7 @@ $(document).ready(async function () {
     }
     await saveConfigMutation((next) => {
       Object.assign(next.search, patch);
+      Object.assign(next.schedule, patch);
     });
   });
   $searchModeA.on("click", async function () {
@@ -722,45 +729,11 @@ $(document).ready(async function () {
       await saveConfigMutation((next) => {
         next.search.desk = preset.desk;
         next.search.mob = preset.mob;
+        next.schedule.desk = preset.desk;
+        next.schedule.mob = preset.mob;
       });
       compare();
     }
-  });
-  $scheduleDesk.on("change", async function () {
-    const desk = readLimitedNumber($(this), "scheduleDesk");
-    await saveConfigMutation((next) => {
-      next.schedule.desk = desk;
-    });
-  });
-  $scheduleMob.on("change", async function () {
-    const mob = readLimitedNumber($(this), "scheduleMob");
-    await saveConfigMutation((next) => {
-      next.schedule.mob = mob;
-    });
-  });
-  $scheduleMin.on("change", async function () {
-    let val = readLimitedNumber($(this), "scheduleMin");
-    let range = Number($scheduleMax.val());
-    const patch = { min: val };
-    if (range < val * 1.5) {
-      range = clampLimitedNumber(Math.ceil(val * 1.5), "scheduleMax");
-      patch.max = range;
-    }
-    await saveConfigMutation((next) => {
-      Object.assign(next.schedule, patch);
-    });
-  });
-  $scheduleMax.on("change", async function () {
-    let val = readLimitedNumber($(this), "scheduleMax");
-    let range = Number($scheduleMin.val());
-    const patch = { max: val };
-    if (val < range * 1.5) {
-      range = clampLimitedNumber(Math.floor(val / 1.5), "scheduleMin");
-      patch.min = range;
-    }
-    await saveConfigMutation((next) => {
-      Object.assign(next.schedule, patch);
-    });
   });
   $scheduleTime.on("change", async function () {
     const time = $(this).val() || "08:00";

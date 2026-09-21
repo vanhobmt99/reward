@@ -34,6 +34,16 @@ describe("unpacked extension pack", () => {
     assert.match(html, /id="searchTrigger"/);
   });
 
+  it("uses one search plan for manual and scheduled runs", () => {
+    const html = readFileSync(join(root, "popup.html"), "utf8");
+    assert.match(html, /id="planSummary"/);
+    assert.match(html, /id="scheduleSummary"/);
+    assert.doesNotMatch(html, /id="scheduleDesk"/);
+    assert.doesNotMatch(html, /id="scheduleMob"/);
+    assert.doesNotMatch(html, /id="scheduleMin"/);
+    assert.doesNotMatch(html, /id="scheduleMax"/);
+  });
+
   it("includes login.windows.net among Rewards login hosts", () => {
     assert.equal(manifest.host_permissions.includes("*://login.windows.net/*"), true);
   });

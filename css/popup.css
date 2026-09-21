@@ -147,6 +147,31 @@ section {
   gap: calc(8px * var(--scale));
 }
 
+.sectionHeading {
+  align-items: baseline;
+  display: flex;
+  justify-content: space-between;
+  padding: 0 calc(2px * var(--scale));
+}
+
+.sectionHeading h1 {
+  color: var(--text);
+  font-size: calc(13px * var(--scale));
+  font-weight: 600;
+}
+
+.sectionHeading span,
+.advToggle small {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+  font-weight: 500;
+}
+
+.advToggle small {
+  display: block;
+  margin-top: calc(1px * var(--scale));
+}
+
 /* `section { display: flex }` (author origin) beats the UA `[hidden]` rule, so
    a `<section hidden>` (the promoted Schedule panel) would stay visible without
    this explicit override — mirrors `.advanced[hidden]` below. Same for the
@@ -536,6 +561,26 @@ button:disabled,
   letter-spacing: 0.06em;
   padding: calc(4px * var(--scale)) calc(2px * var(--scale)) 0;
   text-transform: uppercase;
+}
+
+/* Maintenance controls are useful when diagnosing a problem, but keeping
+   them collapsed preserves the small popup for the actions used every day. */
+.maintenance {
+  display: flex;
+  flex-direction: column;
+  gap: calc(8px * var(--scale));
+}
+
+.maintenance summary {
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: calc(12px * var(--scale));
+  font-weight: 600;
+  padding: calc(6px * var(--scale)) calc(2px * var(--scale));
+}
+
+.maintenance summary:hover {
+  color: var(--primary);
 }
 
 /* ── Destructive buttons: clearly marked, with a two-step confirm ───── */
