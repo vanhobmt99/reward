@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import vm from "node:vm";
+import { readFileSync } from "node:fs";
 import { createRunCoordinator } from "../js/run-coordinator.js";
 import { cleanupAfterRun } from "../js/search-phases.js";
 import { createRunCheckpoint, validateRunCheckpoint, getCheckpointRemainingPlan } from "../js/run-checkpoint.js";
@@ -105,4 +106,73 @@ test("injected scanners fail closed without recognized sections; claim probe nev
   const result = vm.runInNewContext(createClaimReadyScript(true, false, true), context);
   assert.equal(result.clicked, false);
   assert.equal(result.count, null);
+});
+
+for (const name of ["runDashboardActivityPass", "runEarnActivityPass"]) {
+  test(`${name}: visited tabs and balance growth cannot confirm an incomplete offer`, async () => {
+    const source = readFileSync(new URL("../js/service.js", import.meta.url), "utf8");
+    const start = source.indexOf(`async function ${name}(`);
+    const end = source.indexOf("\n}", start) + 2;
+    for (const complete of [false, true]) {
+      const key = "https://www.bing.com/search?q=test";
+      const confirmed = [];
+      const context = vm.createContext({
+        rewards: "https://rewards.bing.com/", logs: false, shortestDelay: 0, mediumDelay: 0, longestDelay: 0,
+        sendTabMessage: async () => {}, delay: async () => {}, wait: async () => {}, race: promise => promise,
+        chrome: { tabs: { query: async () => [], update: async () => {} }, debugger: { sendCommand: async () => ({ result: { value: {
+          clicked: [{ type: "daily-set", text: "View" }], skipped: [], openedKeys: [key],
+        } } }) } },
+        createDashboardActivityScript, createEarnActivityScript,
+        getBlockedActivityKeys: () => new Set(), fetchRewardsSnapshot: async () => ({ score: 100 }), getScoreDelta: () => 50,
+        processOpenedActivityTabs: async () => 1,
+        verifyActivityKeys: async keys => getConfirmedActivityKeys({ morePromotions: [{ destinationUrl: key, complete }] }, keys),
+        confirmActivityKeys: (_memory, _visited, _misses, keys) => confirmed.push(...keys),
+        markUnconfirmedActivityKeys: () => ({ retryable: true }), saveActivityMemory: async () => {},
+        log: () => {}, formatActivityDiag: () => "",
+      });
+      vm.runInContext(source.slice(start, end), context);
+      const result = await vm.runInContext(`${name}(1, {}, new Set(), new Map(), 1)`, context);
+      assert.equal(result.clicked, complete ? 1 : 0);
+      assert.deepEqual(confirmed, complete ? [key] : []);
+    }
+  });
+}
+
+test("Stop during preflight still releases the session through initialise cleanup", async () => {
+  const source = readFileSync(new URL("../js/service.js", import.meta.url), "utf8");
+  const config = { runtime: {} };
+  const coordinator = createRunCoordinator({ getConfig: () => config, setConfig: async () => {} });
+  const session = coordinator.startNewSession("search");
+  coordinator.requestStop();
+  const context = vm.createContext({ config, logs: false, RunCoordinator: coordinator,
+    isSessionStillActive: () => false, needPatch: false, userStopTask: null,
+    recordRunReport: async () => {}, clearRunCheckpoint: async () => {},
+    cleanupAfterRun: async (_tab, _session, deps) => deps.stopCurrentSession("finished"),
+    set: async () => {}, getScheduleAlarmDelayMs: () => 0, isScheduledModeActive: () => false,
+  });
+  const start = source.indexOf("async function initialise(");
+  vm.runInContext(source.slice(start, source.indexOf("\nasync function resumeRecentCheckpoint", start)), context);
+  assert.equal(await vm.runInContext(`initialise({}, ${JSON.stringify(session.id)})`, context), false);
+  assert.equal(coordinator.canStartNewRun().allowed, true);
+});
+
+test("resume holds ownership while refreshing quota and releases on invalid identity", async () => {
+  const source = readFileSync(new URL("../js/service.js", import.meta.url), "utf8");
+  const config = { runtime: {} };
+  const coordinator = createRunCoordinator({ getConfig: () => config, setConfig: async () => {} });
+  let releaseRefresh;
+  const context = vm.createContext({ config, RunCoordinator: coordinator, userStopTask: null,
+    readValidRunCheckpoint: async () => ({ sessionId: "old" }),
+    refreshSearchCountersFromRewards: () => new Promise(resolve => { releaseRefresh = resolve; }),
+    validateRunCheckpoint: () => ({ valid: false }), rewardsAccountKey: null,
+    clearRunCheckpoint: async () => {},
+  });
+  const start = source.indexOf("async function resumeRecentCheckpoint()");
+  vm.runInContext(source.slice(start, source.indexOf("\nchrome.alarms.onAlarm", start)), context);
+  const pending = vm.runInContext("resumeRecentCheckpoint()", context);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(coordinator.canStartNewRun().allowed, false);
+  releaseRefresh(true);
+  assert.equal(await pending, false);
+  assert.equal(coordinator.canStartNewRun().allowed, true);
 });

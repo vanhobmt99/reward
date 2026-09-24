@@ -489,56 +489,56 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
 
 
   try {
-  if (isCurrentSession || !config?.runtime?.currentSession) {
-    config.runtime.rsaTab = null;
-    config.runtime.mobile = 0;
-    config.runtime.act = 0;
-    config.runtime.currentPhase = null;
-    await setConfig(config);
-  }
-
-  // A scheduled run finished while the popup was closed — surface the outcome
-  // via a system notification when the caller provides one. `isCurrentSession`
-  // filters out user-initiated stops (the session is already gone by cleanup
-  // time), which need no "run failed" notification.
-  if (
-    sessionType === "schedule" &&
-    isCurrentSession && !config.runtime.stopping &&
-    typeof notifyFn === "function"
-  ) {
-    try {
-      notifyFn(runSucceeded);
-    } catch (e) {}
-  }
-
-  const shouldRearmSchedule =
-    noConflictingRun &&
-    (isCurrentSession || deps.endedSessionType) &&
-    typeof getScheduleAlarmDelayMs === "function" &&
-    typeof isScheduledModeActive === "function" &&
-    isScheduledModeActive();
-
-  if (
-    shouldRearmSchedule &&
-    (sessionType === "schedule" || sessionType === "search")
-  ) {
-    const scheduleMode = config?.schedule?.mode;
-    let delayMs = getScheduleAlarmDelayMs(scheduleMode);
-    if (!runSucceeded && delayMs) {
-      // Backoff: double the delay on failure (cap at 30 minutes)
-      delayMs = Math.min(delayMs * 2, 30 * 60 * 1000);
-      log(
-        `[CLEANUP] - Run failed; re-arming schedule with backoff delay (${Math.round(delayMs / 1000)}s).`,
-        "warning",
-      );
+    if (isCurrentSession || !config?.runtime?.currentSession) {
+      config.runtime.rsaTab = null;
+      config.runtime.mobile = 0;
+      config.runtime.act = 0;
+      config.runtime.currentPhase = null;
+      await setConfig(config);
     }
-    if (delayMs) {
-      await createAlarm("schedule", { when: Date.now() + delayMs });
-      if (runSucceeded) {
-        log(`[CLEANUP] - Scheduled next run.`, "update");
+
+    // A scheduled run finished while the popup was closed — surface the outcome
+    // via a system notification when the caller provides one. `isCurrentSession`
+    // filters out user-initiated stops (the session is already gone by cleanup
+    // time), which need no "run failed" notification.
+    if (
+      sessionType === "schedule" &&
+      isCurrentSession && !config.runtime.stopping &&
+      typeof notifyFn === "function"
+    ) {
+      try {
+        notifyFn(runSucceeded);
+      } catch (e) {}
+    }
+
+    const shouldRearmSchedule =
+      noConflictingRun &&
+      (isCurrentSession || deps.endedSessionType) &&
+      typeof getScheduleAlarmDelayMs === "function" &&
+      typeof isScheduledModeActive === "function" &&
+      isScheduledModeActive();
+
+    if (
+      shouldRearmSchedule &&
+      (sessionType === "schedule" || sessionType === "search")
+    ) {
+      const scheduleMode = config?.schedule?.mode;
+      let delayMs = getScheduleAlarmDelayMs(scheduleMode);
+      if (!runSucceeded && delayMs) {
+        // Backoff: double the delay on failure (cap at 30 minutes)
+        delayMs = Math.min(delayMs * 2, 30 * 60 * 1000);
+        log(
+          `[CLEANUP] - Run failed; re-arming schedule with backoff delay (${Math.round(delayMs / 1000)}s).`,
+          "warning",
+        );
+      }
+      if (delayMs) {
+        await createAlarm("schedule", { when: Date.now() + delayMs });
+        if (runSucceeded) {
+          log(`[CLEANUP] - Scheduled next run.`, "update");
+        }
       }
     }
-  }
   } finally {
     if (isCurrentSession) await stopCurrentSession("normal_finish");
   }

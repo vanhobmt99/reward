@@ -66,10 +66,9 @@
   border-radius: calc(3px * var(--scale));
 }
 
-.material-symbols-outlined {
+.icon {
   align-items: center;
   display: flex;
-  font-family: "Material Symbols Outlined", system-ui, sans-serif;
   font-size: calc(20px * var(--scale));
   font-style: normal;
   font-weight: normal;

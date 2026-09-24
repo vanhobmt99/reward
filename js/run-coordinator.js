@@ -106,7 +106,8 @@ export function createRunCoordinator(deps) {
             `[COORDINATOR] - Stop requested but no active session.`,
             "warning",
           );
-        await _resetRuntime(config);
+        releasing = true;
+        try { await _resetRuntime(config); } finally { releasing = false; }
         return;
       }
 

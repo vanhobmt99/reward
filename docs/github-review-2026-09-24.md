@@ -153,9 +153,13 @@ xác nhận bằng đúng offer đã hoàn thành; claim cần thấy trạng th
 Đã lưu snapshot quota và cooldown từng thiết bị, đưa quota/làm mới lên màn hình
 chính, chuyển giới hạn lượt sang Tùy chọn và bổ sung lý do trong báo cáo.
 
-Kiểm thử: 136 ca Node đạt, gồm race Dừng/Chạy, cleanup lỗi, checkpoint sai tài khoản,
+Kiểm thử: 140 ca Node đạt, gồm race Dừng/Chạy, cleanup lỗi, checkpoint sai tài khoản,
 quota null/cũ/cooldown, offer chưa hoàn thành và scanner mất section. Đã kiểm tra
 popup trên localhost bằng trình duyệt với mock Chrome API. Chưa xác minh lượt kiếm
 điểm thật bằng extension đã reload: công cụ không cho truy cập trang quản lý extension.
 Không cộng gộp counter nhiều tier khi chưa có bằng chứng payload; số lượt vẫn là
 ước tính 3 điểm/lượt. Không tự resume nếu API không cung cấp định danh tài khoản.
+
+Đợt dọn cuối: bỏ nhánh force không còn dùng, bỏ vòng đọc tổng điểm trùng lặp và
+thay font icon 3.961.284 byte bằng SVG nội tuyến. Kiểm tra popup sáng/tối, mở Tùy chọn,
+chọn chỉ nhiệm vụ và làm mới quota bằng bàn phím trên localhost đều đạt.

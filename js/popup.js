@@ -435,7 +435,7 @@ async function flashStatus($btn, originalText, result, successMsg) {
 }
 async function stopActiveRunIfNeeded() {
   const stored = await get();
-  if (!stored?.runtime?.running) return true;
+  if (!stored?.runtime?.running && !stored?.runtime?.stopping && !stored?.runtime?.currentSession) return true;
   // The worker may be asleep; if the stop message is lost we still poll storage
   // below, so swallow send errors rather than aborting the reset flow.
   try {
@@ -447,7 +447,7 @@ async function stopActiveRunIfNeeded() {
   const deadline = Date.now() + STOP_WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const current = await get();
-    if (!current?.runtime?.running) return true;
+    if (!current?.runtime?.running && !current?.runtime?.stopping && !current?.runtime?.currentSession) return true;
     await new Promise((resolve) => setTimeout(resolve, STOP_WAIT_POLL_MS));
   }
   return false;
