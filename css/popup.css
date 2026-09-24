@@ -90,8 +90,9 @@ b {
 body {
   --scale: 1;
   background: var(--bg);
-  height: calc(360px * var(--scale));
-  width: calc(320px * var(--scale));
+  height: auto;
+  max-height: 600px;
+  width: calc(360px * var(--scale));
 }
 
 header {
@@ -135,7 +136,8 @@ main {
   display: flex;
   flex-direction: column;
   gap: calc(8px * var(--scale));
-  height: calc(312px * var(--scale));
+  height: auto;
+  max-height: 552px;
   overflow-y: auto;
   padding: calc(8px * var(--scale));
 }
@@ -323,19 +325,6 @@ section[hidden],
   width: 0%;
 }
 
-.running {
-  animation: loading 1s infinite ease-in-out;
-}
-
-@keyframes loading {
-  0% {
-    width: 0%;
-  }
-  100% {
-    width: 100%;
-  }
-}
-
 .trigger {
   align-items: center;
   background: var(--primary);
@@ -363,7 +352,7 @@ section[hidden],
   justify-content: center;
 }
 
-.mode a {
+.mode button {
   align-items: center;
   background: var(--surface);
   border-radius: calc(4px * var(--scale));
@@ -373,15 +362,16 @@ section[hidden],
   font-weight: 500;
   height: calc(34px * var(--scale));
   justify-content: center;
+  padding: 0 calc(8px * var(--scale));
   width: calc(50% - calc(4px * var(--scale)));
 }
 
-.mode a.active {
+.mode button.active {
   background: var(--primary);
   color: var(--bg);
 }
 
-.mode a:hover:not(.active) {
+.mode button:hover:not(.active):not(:disabled) {
   color: var(--primary);
 }
 
@@ -399,7 +389,7 @@ section[hidden],
   position: relative;
 }
 
-.menuItem a {
+.menuItem #resetDevice {
   align-items: center;
   border-radius: calc(4px * var(--scale));
   cursor: pointer;
@@ -409,7 +399,7 @@ section[hidden],
   width: calc(32px * var(--scale));
 }
 
-.menuItem a:hover {
+.menuItem #resetDevice:hover {
   color: var(--primary);
 }
 
@@ -461,7 +451,7 @@ section[hidden],
   padding: calc(4px * var(--scale)) calc(16px * var(--scale));
 }
 
-.mode a.disabled {
+.mode button.disabled {
   pointer-events: none;
   opacity: 0.5;
 }
@@ -527,22 +517,69 @@ button:disabled,
   }
 }
 
-/* ── Run status line under the search tile ──────────────────────────── */
-.runStatus {
-  color: var(--text-muted);
-  font-size: calc(12px * var(--scale));
-  font-weight: 500;
-  min-height: calc(16px * var(--scale));
-  text-align: center;
+/* Compact run feedback: current work first, most recent result when idle. */
+.runCard,
+.lastReport {
+  background: var(--surface);
+  border-radius: calc(6px * var(--scale));
+  box-shadow: inset 0 0 0 calc(1px * var(--scale)) var(--border);
+  padding: calc(9px * var(--scale)) calc(10px * var(--scale));
 }
 
-.runStatus:empty {
+.runCard[hidden],
+.lastReport[hidden] {
   display: none;
 }
 
-.runStatus .err {
-  color: var(--danger);
+.runCardHead,
+.lastReport {
+  align-items: center;
+  display: flex;
+  justify-content: space-between;
+}
+
+.runCardHead strong,
+.lastReport strong {
+  font-size: calc(12px * var(--scale));
   font-weight: 600;
+}
+
+.runCardHead span,
+.runCard p,
+.lastReport span,
+.lastReport small {
+  color: var(--text-muted);
+  font-size: calc(11px * var(--scale));
+}
+
+.runCard p {
+  margin-top: calc(4px * var(--scale));
+}
+
+.lastReport {
+  gap: calc(8px * var(--scale));
+}
+
+.lastReport span {
+  flex: 1;
+}
+
+.lastReport strong[data-outcome="completed"] {
+  color: var(--success-solid);
+}
+
+.lastReport strong[data-outcome="uncertain"],
+.lastReport strong[data-outcome="failed"] {
+  color: var(--danger);
+}
+
+.compactTile .input {
+  height: calc(52px * var(--scale));
+}
+
+.compactTile .input input {
+  font-size: calc(30px * var(--scale));
+  height: calc(38px * var(--scale));
 }
 
 /* ── Small inline hint under a field group (units, quick-pick meaning) ─ */
@@ -655,3 +692,12 @@ button:disabled,
   font-size: 12px;
   line-height: 1.5;
 }
+
+.quotaGrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.quotaGrid > div { display: grid; gap: 6px; padding: 14px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.quotaGrid span, .quotaGrid small, .quotaMeta { color: var(--text-muted); font-size: 12px; }
+.quotaGrid strong { font-size: 16px; color: var(--text); }
+.quotaMeta { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+#refreshQuota { padding: 8px; color: var(--primary); background: transparent; cursor: pointer; }
+#planSummary { display: none; }
+#advanced h2 { font-size: 14px; color: var(--text); }

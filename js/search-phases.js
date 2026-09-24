@@ -1,6 +1,6 @@
 // How many times the mobile emulation handshake is retried before the mobile
 // phase is abandoned.
-const MOBILE_SIMULATION_ATTEMPTS = 3;
+const MOBILE_SIMULATION_ATTEMPTS = 2;
 
 export async function runSearchPhases(
   searches,
@@ -29,8 +29,12 @@ export async function runSearchPhases(
 
   // Helper to update runtime state in-memory + persist to storage once
   const updatePhase = async (phase, extra = {}) => {
+    if (!isSessionStillActive(expectedSessionId) || !getConfig()?.runtime?.running) throw new Error("Run stopped");
     const cfg = getConfig();
     cfg.runtime.currentPhase = phase;
+    cfg.runtime.lastAction = phase;
+    cfg.runtime.updatedAt = Date.now();
+    cfg.runtime.retry = 0;
     Object.assign(cfg.runtime, extra);
     await setConfig(cfg);
   };
@@ -54,7 +58,7 @@ export async function runSearchPhases(
 
     let mobilePhaseStarted = false;
     try {
-      if (searches.mob > 0 && isSessionStillActive(expectedSessionId)) {
+      if (searches.mob > 0 && isSessionStillActive(expectedSessionId) && getConfig()?.runtime?.running) {
         if (!searchPhasesSuccessful) {
           log(
             `[SEARCH] - Desktop phase did not complete cleanly; continuing requested mobile searches.`,
@@ -464,11 +468,14 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
     notifyFn,
   } = deps;
 
+  if (!deps.isActiveSession(expectedSessionId)) return;
   if (tabId) {
     try {
       await removeTabFn(tabId).catch(() => {});
     } catch (e) {}
   }
+
+  if (!deps.isActiveSession(expectedSessionId)) return;
 
   try {
     await clearBadgeFn?.();
@@ -480,10 +487,8 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
   const isCurrentSession = deps.isActiveSession(expectedSessionId);
   const noConflictingRun = !config?.runtime?.currentSession || isCurrentSession;
 
-  if (isCurrentSession) {
-    await stopCurrentSession("normal_finish");
-  }
 
+  try {
   if (isCurrentSession || !config?.runtime?.currentSession) {
     config.runtime.rsaTab = null;
     config.runtime.mobile = 0;
@@ -498,7 +503,7 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
   // time), which need no "run failed" notification.
   if (
     sessionType === "schedule" &&
-    isCurrentSession &&
+    isCurrentSession && !config.runtime.stopping &&
     typeof notifyFn === "function"
   ) {
     try {
@@ -533,5 +538,8 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
         log(`[CLEANUP] - Scheduled next run.`, "update");
       }
     }
+  }
+  } finally {
+    if (isCurrentSession) await stopCurrentSession("normal_finish");
   }
 }

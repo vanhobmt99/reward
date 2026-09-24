@@ -16,6 +16,11 @@ import * as activityPass from "../js/activity-pass-utils.js";
 import * as utils from "../js/utils.js";
 import * as tabErrors from "../js/tab-errors.js";
 import * as configDefaults from "../js/config-defaults.js";
+import * as runDeadline from "../js/run-deadline.js";
+import * as runCheckpoint from "../js/run-checkpoint.js";
+import * as runResults from "../js/run-results.js";
+import * as activityPolicy from "../js/activity-policy.js";
+import * as popupViewModel from "../js/popup-view-model.js";
 
 describe("helper modules load without chrome", () => {
   it("does not define a chrome global", () => {
@@ -56,6 +61,11 @@ describe("helper modules load without chrome", () => {
     ],
     "tab-errors.js": [tabErrors.isTabGoneError, tabErrors.listenForTabGone],
     "config-defaults.js": [configDefaults.createDefaultConfig],
+    "run-deadline.js": [runDeadline.createRunDeadlines],
+    "run-checkpoint.js": [runCheckpoint.validateRunCheckpoint],
+    "run-results.js": [runResults.createRunResult],
+    "activity-policy.js": [activityPolicy.classifyAutomaticTask],
+    "popup-view-model.js": [popupViewModel.createPopupRunViewModel],
   };
 
   for (const [name, fns] of Object.entries(required)) {

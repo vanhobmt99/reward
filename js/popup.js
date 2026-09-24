@@ -1,3 +1,4 @@
+import { createQuotaView } from "/js/search-quota.js";
 import "/js/jquery.js";
 import { log, get, atomicUpdate, applyConfigDefaults } from "/js/utils.js";
 import { devices } from "/js/devices.js";
@@ -5,6 +6,7 @@ import { createDefaultConfig } from "/js/config-defaults.js";
 import { ACTIONS, MESSAGE_TIMEOUT_MS } from "/js/messages.js";
 import { exportCrashLogText, clearCrashLog } from "/js/crash-logger.js";
 import { ACTIVITY_ISSUE_KEY } from "/js/activity-access.js";
+import { createPopupRunViewModel } from "/js/popup-view-model.js";
 
 /**
  * Send a message to the service worker but never hang forever if the worker is
@@ -39,10 +41,6 @@ let config = createDefaultConfig();
 let _uiUpdateTimer = null;
 let _uiLocked = false;
 let _toastTimer = null;
-// Tracks whether we've already auto-revealed the Schedule panel for the current
-// run, so progress-driven re-renders don't fight a user who manually collapsed
-// it. Reset once the run ends.
-let _scheduleAutoRevealed = false;
 
 // How long a destructive button stays "armed" after the first click before it
 // reverts to its idle label. A second click within this window performs the
@@ -106,18 +104,6 @@ function withConfirm(runHandler, confirmText = "Chắc chắn?") {
   };
 }
 
-// Vietnamese labels for runtime.currentPhase (see service.js/search-phases.js).
-// Unknown/empty phases fall back to the bare progress count in updateUI().
-const PHASE_LABELS = {
-  search: "Đang tìm trên máy tính…",
-  mobile_pre_clear: "Đang dọn dữ liệu cho điện thoại…",
-  mobile_simulation: "Đang giả lập điện thoại…",
-  mobile_search: "Đang tìm trên điện thoại…",
-  post_mobile: "Đang khôi phục đăng nhập…",
-  post_search: "Đang dọn dẹp sau tìm kiếm…",
-  activities: "Đang làm nhiệm vụ…",
-};
-
 // ── Tunables (were magic numbers scattered through the file) ──
 const UI_UPDATE_DEBOUNCE_MS = 80;
 const STATUS_FLASH_MS = 1000;
@@ -150,10 +136,10 @@ const $searchMob = $("#searchMob");
 const $searchMin = $("#searchMin");
 const $searchMax = $("#searchMax");
 const $searchMode = $("#searchMode");
-const $searchModeA = $("#searchMode a");
+const $searchModeA = $("#searchMode button");
 const $searchTrigger = $("#searchTrigger");
 const $scheduleMode = $("#scheduleMode");
-const $scheduleModeA = $("#scheduleMode a");
+const $scheduleModeA = $("#scheduleMode button");
 const $scheduleTrigger = $("#scheduleTrigger");
 const $scheduleTime = $("#scheduleTime");
 const $scheduleTimeRow = $("#scheduleTimeRow");
@@ -166,7 +152,6 @@ const $clear = $("#clear");
 const $preserveRewards = $("#preserveRewards");
 const $log = $("#log");
 const $niche = $("#niche");
-const $activity = $("#activity");
 const $act = $("#act");
 const $clearBrowsingData = $("#clearBrowsingData");
 const $simulate = $("#simulate");
@@ -177,7 +162,7 @@ const $clearCrashLog = $("#clearCrashLog");
 const $runtime = $("#runtime");
 const $reset = $("#reset");
 const $progressBar = $(".progressBar");
-const $progress = $(".progress:not(.act)");
+const $progress = $(".progress");
 const $failed = $(".failed");
 function compare() {
   const logs = config?.control?.log;
@@ -187,7 +172,7 @@ function compare() {
   let matchedMode = null;
   for (const [id, val] of Object.entries(SEARCH_MODE_PRESETS)) {
     if (desk === val.desk && mob === val.mob) {
-      $searchMode.find(`a.${id}`).addClass("active");
+      $searchMode.find(`button.${id}`).addClass("active");
       logs && log(`[COMPARE] - Search mode set to: ${id}`, "update");
       config.search.mode = id;
       matchedMode = id;
@@ -244,6 +229,29 @@ async function resetDevice() {
     return false;
   }
 }
+function renderLiveStatus() {
+  const runView = createPopupRunViewModel(config);
+  $("#runCard").prop("hidden", !runView.running);
+  $("#runTitle").text(runView.title);
+  $("#runDetail").text(runView.detail);
+  $("#runMeta").text(runView.meta);
+  $("#lastReport").prop("hidden", runView.running || !runView.report);
+  $("#lastReportTitle")
+    .text(runView.report?.title || "")
+    .attr("data-outcome", runView.report?.outcome || "");
+  $("#lastReportDetail").text(runView.report?.detail || "");
+
+  const quota = createQuotaView(config);
+  for (const [index, id] of [[0, "Desk"], [1, "Mob"]]) {
+    $(`#quota${id}`).text(quota.rows[index].points);
+    $(`#quota${id}Detail`).text(quota.rows[index].detail);
+  }
+  $("#quotaUpdated").text(quota.meta);
+  $("#quotaEstimate").text(quota.estimate);
+}
+const liveStatusTimer = setInterval(renderLiveStatus, 1000);
+window.addEventListener("pagehide", () => clearInterval(liveStatusTimer), { once: true });
+
 async function updateUI() {
   const issueData = await chrome.storage.local.get(ACTIVITY_ISSUE_KEY);
   const issue = issueData[ACTIVITY_ISSUE_KEY];
@@ -305,12 +313,11 @@ async function updateUI() {
   };
   $scheduleSummary.text(scheduleLabels[config?.schedule?.mode] || "Thủ công");
   if (config?.runtime?.running) {
-    $searchTrigger.text("Dừng").addClass("stopping");
-    $scheduleTrigger.text("Dừng").addClass("stopping");
+    $searchTrigger.text("Dừng ngay").addClass("stopping");
   } else {
-    $searchTrigger.text("Làm nhiệm vụ").removeClass("stopping");
-    $scheduleTrigger.text("Đặt lịch").removeClass("stopping");
+    $searchTrigger.text("Làm phần còn thiếu").removeClass("stopping");
   }
+  $scheduleTrigger.text("Đặt lịch").removeClass("stopping");
   const { total, done, failed } = config.runtime;
   const totalCount = Number(total) || 0;
   const doneCount = Number(done) || 0;
@@ -355,35 +362,13 @@ async function updateUI() {
   }
   $niche.val(resolvedNiche);
   $act.prop("checked", config?.control?.act ? true : false);
-  if (config.runtime.act) {
-    $("#activity ~ .progressBar > .progress").addClass("running");
-  } else {
-    $("#activity ~ .progressBar > .progress").removeClass("running");
-  }
+  const isRunning = !!(config?.runtime?.running || config?.runtime?.stopping || config?.runtime?.currentSession);
 
-  const isRunning = !!config?.runtime?.running;
+  renderLiveStatus();
 
-  // Visible progress line — the same numbers that used to hide inside the
-  // progress-bar tooltip (only readable on hover of a 4px strip).
-  const $runStatus = $("#runStatus");
-  // Human-readable label for the current runtime phase so the status line says
-  // WHAT the run is doing ("Đang giả lập điện thoại…"), not just a bare count —
-  // this is what makes a long mobile/activity phase not feel frozen.
-  const phaseLabel = PHASE_LABELS[config?.runtime?.currentPhase] || "";
-  if (totalCount > 0) {
-    const performed = doneCount + failedCount;
-    const failText = failedCount
-      ? ` · <span class="err">${failedCount} lỗi</span>`
-      : "";
-    const phaseText = phaseLabel ? `${phaseLabel} · ` : "";
-    $runStatus.html(`${phaseText}Đã làm ${performed}/${totalCount}${failText}`);
-  } else if (isRunning) {
-    $runStatus.text(phaseLabel || "Đang khởi động…");
-  } else {
-    $runStatus.text("");
-  }
-
-  $("#searchTrigger, #scheduleTrigger").prop("disabled", false);
+  $searchTrigger.prop("disabled", !!config?.runtime?.stopping);
+  if (config?.runtime?.stopping) $searchTrigger.text("Đang dọn dẹp…");
+  $scheduleTrigger.prop("disabled", isRunning);
   const configInputIds = [
     "#searchDesk",
     "#searchMob",
@@ -396,11 +381,13 @@ async function updateUI() {
     $(id).prop("disabled", isRunning);
   });
 
-  $("#searchMode a, #scheduleMode a").toggleClass("disabled", isRunning);
+  $("#searchMode button, #scheduleMode button")
+    .prop("disabled", isRunning)
+    .toggleClass("disabled", isRunning);
 
   // Disable maintenance actions that would corrupt or collide with an active
   // run (start another activity/simulation, or wipe cookies mid-run).
-  $("#activity, #simulate, #clearBrowsingData").prop("disabled", isRunning);
+  $("#simulate, #clearBrowsingData").prop("disabled", isRunning);
 
   logs && log(`[UPDATE] - UI updated`, "update");
 
@@ -417,20 +404,6 @@ async function updateUI() {
     $badge.hide();
   }
 
-  // Schedule is its own collapsible section now; when a schedule run becomes
-  // active, reveal it ONCE so its trigger ("Dừng") and progress are visible.
-  // Guarded by a flag so progress-driven re-renders don't re-open a panel the
-  // user deliberately collapsed mid-run. The flag resets when the run ends.
-  if (isRunning && config?.runtime?.mode === "schedule") {
-    if (!_scheduleAutoRevealed) {
-      $("#schedule").prop("hidden", false);
-      $("#schedToggle").attr("aria-expanded", "true");
-      _scheduleAutoRevealed = true;
-      logs && log(`[NAV] - Schedule running; Schedule panel opened.`);
-    }
-  } else {
-    _scheduleAutoRevealed = false;
-  }
 }
 async function flashStatus($btn, originalText, result, successMsg) {
   // Remember the button's original tooltip so we can restore it after the flash
@@ -654,26 +627,6 @@ $(document).ready(async function () {
     $scheduleSection.prop("hidden", isOpen);
     $schedToggle.attr("aria-expanded", String(!isOpen));
   });
-  // The mode presets and reset-device control are <a role="button"> elements
-  // (no href), so they aren't keyboard-operable by default. Mirror native
-  // button behaviour: Enter/Space activates them.
-  $(document).on("keydown", 'a[role="button"]', function (e) {
-    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
-      e.preventDefault();
-      // `.disabled` presets block the mouse via `pointer-events: none`, but a
-      // programmatic click() bypasses that — guard here so a keyboard user
-      // can't mutate search/schedule counts mid-run.
-      if (this.classList.contains("disabled")) return;
-      this.click();
-    }
-  });
-  // If a schedule run is already active on load, reveal the Schedule section so
-  // its controls and progress are visible.
-  if (config?.runtime?.running && config?.runtime?.mode === "schedule") {
-    $scheduleSection.prop("hidden", false);
-    $schedToggle.attr("aria-expanded", "true");
-  }
-
   const logs = config?.control?.log;
   logs && log("[INIT] - UI initialized with scale: " + scale, "update");
   $searchDesk.on("change", async function () {
@@ -846,6 +799,24 @@ $(document).ready(async function () {
       }
     };
   }
+  $("#refreshQuota").on("click", async function () {
+    $(this).prop("disabled", true);
+    try {
+      const result = await sendMessageWithTimeout({ action: ACTIONS.REFRESH_QUOTA });
+      showToast(result?.message, result?.success ? "success" : "error");
+      await updateUI();
+    } catch { showToast("Không cập nhật được quota.", "error"); }
+    finally { $(this).prop("disabled", false); }
+  });
+  $("#activitiesOnly").on("click", async () => {
+    if (config.runtime.currentSession) return;
+    await saveConfigMutation((next) => {
+      next.search.desk = 0; next.search.mob = 0; next.control.act = 1;
+      next.schedule.desk = 0; next.schedule.mob = 0;
+    });
+    await updateUI();
+    showToast("Đã chọn chỉ nhiệm vụ. Bấm Làm phần còn thiếu để chạy.");
+  });
   $searchTrigger.on(
     "click",
     makeRunTriggerHandler({
@@ -909,23 +880,6 @@ $(document).ready(async function () {
     });
     logs && log(`[CONTROL] - Niche set to: ${config.control.niche}`, "update");
   });
-  $activity.on(
-    "click",
-    makeActionHandler(
-      async ($btn, $btnText) => {
-        const response = await sendMessageWithTimeout({
-          action: ACTIONS.ACTIVITY,
-        });
-        await flashStatus($btn, $btnText, response);
-        logs &&
-          log(
-            `[ACTIVITY] - Activity started: ${response?.message ?? JSON.stringify(response)}`,
-            "update",
-          );
-      },
-      { locked: true },
-    ),
-  );
   $act.on("change", async function () {
     const act = $(this).is(":checked") ? 1 : 0;
     await saveConfigMutation((next) => {

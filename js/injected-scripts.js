@@ -1,3 +1,4 @@
+import { classifyAutomaticTask } from "./activity-policy.js";
 /**
  * Injected activity scripts. Each function returns a self-contained JavaScript
  * source string that the service worker runs in the Rewards page via
@@ -73,6 +74,7 @@ export function createRewardsSectionReadyProbe(patternSource) {
  */
 function activityDomHelpers(cardKeyword, maxCardTextLength) {
   return `
+      const classifyAutomaticTask = ${classifyAutomaticTask.toString()};
 			// Set by openTarget whenever it declines a card, so a pass can report why
 			// it came back empty instead of returning an unexplained zero.
 			let lastOpenSkip = '';
@@ -306,6 +308,7 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 					lastOpenSkip = 'target not visible';
 					return false;
 				}
+				if (target.disabled || target.getAttribute?.('aria-disabled') === 'true' || target.hasAttribute?.('disabled')) { lastOpenSkip = 'unavailable'; return false; }
 				const key = keyFor(target, type, text);
 				// Already-handled cards are the normal steady state, not a failure:
 				// leave lastOpenSkip empty so they stay out of the pass diagnostics.
@@ -436,7 +439,8 @@ ${activityDomHelpers("daily", 520)}
 					};
 				}
 			}
-			const unboundedDailySet = !dailyHeading;
+			if (!dailyHeading) return { clicked, skipped, openedKeys, retry: false, reason: 'Daily set section unavailable' };
+			const unboundedDailySet = false;
 			// Section boundaries must be real headings. Generic div/span text often
 			// contains "activities" inside the first Daily Set card and previously
 			// truncated the region before that card, producing a silent click miss.
@@ -488,6 +492,7 @@ ${activityDomHelpers("daily", 520)}
 			// completed — those words sit on real Daily set cards ("In progress",
 			// "About this quiz", "Daily Set Streak"). Completion is isDone's job.
 			const skipPattern = /learn more|privacy|terms|download app|not eligible|tìm hiểu thêm|giới thiệu|bảo mật|điều khoản|tải ứng dụng|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
+			const unsupportedTaskPattern = /quiz|trivia|punch|game|purchase|buy|shop|order|download|install|app\\b|sweepstake|contest|trắc nghiệm|câu hỏi|đố vui|trò chơi|mua|đặt hàng|tải|cài đặt/i;
 			const expandPattern = /earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng/i;
 
 			const nodes = Array.from(mainRoot.querySelectorAll(
@@ -522,6 +527,10 @@ ${activityDomHelpers("daily", 520)}
 					if (hasPoints || activityHrefPattern.test(href)) {
 						skipped.push({ type, text: text.slice(0, 90), reason: 'already done' });
 					}
+					continue;
+				}
+				if (!classifyAutomaticTask({ title: text, url: href }).safe) {
+					skipped.push({ type, text: text.slice(0, 90), reason: 'unsupported automatic task' });
 					continue;
 				}
 				// Point-bearing cards are never chrome. Applying skipPattern to
@@ -668,6 +677,9 @@ ${activityDomHelpers("earn", 560)}
 				if (/completed|earned last month|already done|claimed|you did it|đã hoàn thành|đã nhận|đã hoàn tất|đã xong/i.test(txt)) {
 					return 'already completed';
 				}
+				if (el?.disabled === true || el?.getAttribute?.('aria-disabled') === 'true' || el?.hasAttribute?.('disabled')) {
+					return 'unavailable';
+				}
 				const lockProbe = Array.from(el.querySelectorAll('[aria-label], [title], [class]'))
 					.some((node) => /lock|locked|level required|required|bị khóa|yêu cầu/i.test([
 						node.getAttribute('aria-label'),
@@ -708,6 +720,16 @@ ${activityDomHelpers("earn", 560)}
 				markerNodes.find((item) => item.semantic && item.text.length <= 48 && primaryKeepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.semantic && item.text.length <= 48 && keepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.text.length <= 48 && keepHeadingPattern.test(item.text));
+			const keepEarningRoot = document.querySelector('#moreactivities, [id*="moreactivities" i], [data-bi-area*="MoreActivities" i], [data-bi-id*="moreactivities" i]');
+			if (!keepHeading && keepEarningRoot && hasLayout(keepEarningRoot)) {
+				const rootHeading = keepEarningRoot.querySelector('h1, h2, h3, h4, [role="heading"]') || keepEarningRoot;
+				keepHeading = {
+					el: rootHeading,
+					text: textOf(rootHeading) || 'Keep earning',
+					rect: rootHeading.getBoundingClientRect(),
+					semantic: true
+				};
+			}
 			if (!keepHeading) {
 				const doc = document.documentElement;
 				const maxScroll = Math.max(
@@ -732,7 +754,8 @@ ${activityDomHelpers("earn", 560)}
 					};
 				}
 			}
-			const unboundedEarn = !keepHeading;
+			if (!keepHeading) return { clicked, skipped, openedKeys, retry: false, reason: 'Keep earning section unavailable' };
+			const unboundedEarn = false;
 			const nextHeading = unboundedEarn ? null : markerNodes.find((item) =>
 				item.rect.top > keepHeading.rect.bottom + 4 &&
 				item.semantic &&
@@ -741,7 +764,7 @@ ${activityDomHelpers("earn", 560)}
 			// Same exclusive-<section> rule as Daily set. Geometric
 			// heading→next-heading bounds truncated a tall Keep earning grid
 			// and, on a short one, swallowed the following section.
-			const keepSection = unboundedEarn ? null : keepHeading.el.closest?.('section');
+			const keepSection = unboundedEarn ? null : (keepEarningRoot?.closest?.('section') || keepHeading.el.closest?.('section') || keepEarningRoot);
 			const sectionIsExclusive = Boolean(keepSection) && !markerNodes.some((item) =>
 				item.semantic &&
 				item.el !== keepHeading.el &&
@@ -768,6 +791,7 @@ ${activityDomHelpers("earn", 560)}
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
 			const activityTextPattern = /quiz|poll|play|watch|explore|search now|complete|claim|check.?in|view|start|earn|tr\\u1eafc nghi\\u1ec7m|th\\u0103m d\\u00f2|c\\u00e2u h\\u1ecfi|ch\\u01a1i|xem|kh\\u00e1m ph\\u00e1|b\\u1eaft \\u0111\\u1ea7u|ki\\u1ebfm|nh\\u1eadn/i;
 			const fallbackSkipPattern = /learn more|privacy|terms|download app|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
+			const unsupportedTaskPattern = /quiz|trivia|punch|game|purchase|buy|shop|order|download|install|app\\b|sweepstake|contest|tr\\u1eafc nghi\\u1ec7m|c\\u00e2u h\\u1ecfi|\\u0111\\u1ed1 vui|tr\\u00f2 ch\\u01a1i|mua|\\u0111\\u1eb7t h\\u00e0ng|t\\u1ea3i|c\\u00e0i \\u0111\\u1eb7t/i;
 			const fallbackCandidates = [];
 			const rewardPointsPattern = /(?:^|[^\\d])\\+\\s*[1-9]\\d*(?:\\s*(?:points?|pts?|điểm|đ))?(?![a-zA-Z0-9_])|(?:^|[^\\d])(?:[1-9]\\d*)\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const zeroPointsPattern = /(?:^|[^\\d])(?:\\+\\s*)?0\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
@@ -793,6 +817,10 @@ ${activityDomHelpers("earn", 560)}
 				const skipReason = skipReasonFor(card) || skipReasonFor(target) || (anchor ? skipReasonFor(anchor) : '');
 				if (skipReason) {
 					skipped.push({ type, text: text.slice(0, 90), reason: skipReason });
+					continue;
+				}
+				if (!classifyAutomaticTask({ title: text, url: href }).safe) {
+					skipped.push({ type, text: text.slice(0, 90), reason: 'unsupported automatic task' });
 					continue;
 				}
 				if (nonCardPattern.test(text)) {
@@ -954,6 +982,8 @@ export function createSolveActivityScript(deferToCdp = false) {
 					el.closest('button, a[href], [role="button"], [role="radio"], [tabindex]:not([tabindex="-1"])') ||
 					el.closest('label') ||
 					el;
+                const pollRoot = document.querySelector('.bt_poll, .b_pole, [data-testid="poll"], [aria-label="Daily poll"]');
+                if (!pollRoot || /quiz|trivia/i.test(document.title)) return { clicked: false, reason: 'no clear poll', url: location.href };
 				const prioritySelectors = [
 					'input[type="radio"]:not(:checked)',
 					'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
@@ -997,7 +1027,7 @@ export function createSolveActivityScript(deferToCdp = false) {
 				const seen = new Set();
 				const scored = [];
 				for (let pri = 0; pri < prioritySelectors.length; pri++) {
-					for (const candidate of document.querySelectorAll(prioritySelectors[pri])) {
+					for (const candidate of pollRoot.querySelectorAll(prioritySelectors[pri])) {
 						if (seen.has(candidate)) continue;
 						seen.add(candidate);
 						const target = clickTargetFor(candidate);
@@ -1090,6 +1120,7 @@ export function createSolveActivityScript(deferToCdp = false) {
 export function createClaimReadyScript(
   deferToCdp = false,
   allowStandaloneConfirm = false,
+  inspectOnly = false,
 ) {
   return `
 			(function() {
@@ -1163,6 +1194,7 @@ export function createClaimReadyScript(
 					}
 				}
 
+                if (${Boolean(inspectOnly)}) return { clicked: false, count: pendingCount, reason: 'inspection' };
 				if (pendingCount === 0) {
 					return { clicked: false, count: 0, reason: 'nothing pending' };
 				}

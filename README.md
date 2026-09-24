@@ -18,8 +18,8 @@ Search Auto là extension Chrome/Edge hỗ trợ chạy tìm kiếm Bing và cá
 
 1. Đăng nhập tài khoản Microsoft trên Bing trước khi mở extension.
 2. Mở Search Auto từ thanh công cụ.
-3. Chọn số lượt tìm kiếm Máy tính và Điện thoại phù hợp với tài khoản của bạn.
-4. Chạy thử một lần ở chế độ **Thủ công** để kiểm tra extension hoạt động bình thường.
+3. Bấm **Làm mới** để đọc quota. Trong **Tùy chọn**, đặt giới hạn lượt Máy tính/Điện thoại hoặc chọn **Chỉ làm nhiệm vụ**.
+4. Bấm **Làm phần còn thiếu** để chạy thử ở chế độ **Thủ công**.
 5. Chỉ sau khi chạy thử thành công mới bật lịch tự động.
 
 ## Để chạy ổn định
@@ -53,12 +53,16 @@ Không cài chồng một thư mục ZIP khác rồi bỏ lại thư mục cũ: 
 
 Việc sử dụng Microsoft Rewards cần tuân theo điều khoản của Microsoft. Extension không bảo đảm điểm thưởng, không nên dùng để xử lý thông tin nhạy cảm và chỉ nên cài từ nguồn bạn tin cậy.
 
-## Ủng hộ dự án
+## Cơ chế bản 2.3.0
 
-Nếu extension hữu ích, bạn có thể ủng hộ tác giả qua MoMo. Quét mã hoặc chuyển đến số **0326363942**.
+- Đọc quota thật trước mỗi pha; chỉ tìm phần còn thiếu trong giới hạn đã đặt. Số lượt hiển thị là **ước tính 3 điểm/lượt**, không phải cam kết được cộng điểm. Không tự bù vô hạn khi điểm cập nhật chậm.
+- Khi không đọc được quota hoặc điểm ngừng tăng, dừng pha và nghỉ 30 phút theo từng thiết bị. Snapshot lưu số điểm và thời điểm đọc, không lưu danh tính tài khoản.
+- Nút Dừng phản hồi ngay; nút Chạy chỉ bật lại khi dọn dẹp xong. Mỗi phiên giữ quyền sở hữu tab/cửa sổ đến hết cleanup.
+- Chỉ tự làm nhiệm vụ đơn giản được nhận diện rõ. Không xác định được section/nhiệm vụ thì bỏ qua; mở link không tự được tính là hoàn thành. Xác nhận theo chính offer hoặc trạng thái claim; trường hợp chưa có bằng chứng hiển thị cần kiểm tra.
+- Checkpoint tối đa 2 phút, tách tiến độ PC/mobile và giữ deadline gốc. Chỉ tự khôi phục khi nhận diện được cùng tài khoản từ API (lưu hash SHA-256); thiếu danh tính thì không tự khôi phục. Phiên đã dừng/kết thúc không resume.
+- Giới hạn thời gian: tìm kiếm 3 phút + 20 giây/lượt (tối đa 25 phút), nhiệm vụ tối đa 12 phút, cả phiên tối đa 35 phút. Lưu tối đa 7 báo cáo, không chứa truy vấn/tài khoản.
 
-<p align="center">
-  <img src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&amp;data=MOMO%3A0326363942" alt="Mã QR ủng hộ MoMo 0326363942" width="220" height="220" />
-</p>
+## Kiểm thử cho người phát triển
 
-<p align="center"><strong>MoMo: 0326363942</strong></p>
+Chạy `npm test` bằng Node.js hỗ trợ `node --test`. Extension không cần cài dependency khi sử dụng.
+Kiểm thử tự động dùng dữ liệu mẫu; điểm thực tế và giao diện Rewards có thể thay đổi.

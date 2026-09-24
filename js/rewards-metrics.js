@@ -17,6 +17,7 @@ export function findFirstNumberByKey(source, names) {
     seen.add(current);
     for (const [key, value] of Object.entries(current)) {
       if (targets.has(key.toLowerCase())) {
+        if (value == null || value === "" || typeof value === "boolean") continue;
         const numeric = Number(value);
         if (Number.isFinite(numeric)) return numeric;
       }
@@ -44,7 +45,9 @@ function readCounterFieldRaw(item, key) {
   if (item == null) return null;
   const attr = item.attributes || item;
   for (const name of COUNTER_FIELD_ALIASES[key] || [key]) {
-    const value = Number(attr?.[name] ?? item[name]);
+    const raw = attr?.[name] ?? item[name];
+    if (raw == null || raw === "" || typeof raw === "boolean") continue;
+    const value = Number(raw);
     if (Number.isFinite(value)) return value;
   }
   return null;

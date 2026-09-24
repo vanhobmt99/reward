@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="vi">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -16,69 +16,38 @@
       <!-- ── Main screen: one screen, one button ── -->
       <section id="search">
         <div class="sectionHeading">
-          <h1>Kế hoạch hôm nay</h1>
+          <h1>Hôm nay</h1>
           <span id="planSummary" aria-live="polite"></span>
         </div>
-        <div class="tile">
-          <div class="input">
-            <label for="searchDesk">Máy tính</label>
-            <input type="number" name="searchDesk" id="searchDesk" />
-          </div>
-          <div class="input">
-            <label for="searchMob">Điện thoại</label>
-            <input type="number" name="searchMob" id="searchMob" />
-          </div>
-          <div class="progressBar">
-            <div class="progress"></div>
-            <div class="failed"></div>
-          </div>
+        <div class="quotaGrid" aria-label="Quota tìm kiếm">
+          <div><span>Máy tính</span><strong id="quotaDesk">Chưa rõ</strong><small id="quotaDeskDetail">Cần cập nhật</small></div>
+          <div><span>Điện thoại</span><strong id="quotaMob">Chưa rõ</strong><small id="quotaMobDetail">Cần cập nhật</small></div>
         </div>
-        <p class="fieldHint">Chọn nhanh số lần tìm — Máy tính · Điện thoại</p>
-        <div id="searchMode" class="mode">
-          <a
-            class="m1"
-            title="11 tìm kiếm Máy tính, 0 tìm kiếm Điện thoại"
-            type="button"
-            role="button"
-            tabindex="0"
-            >11 · 0</a
-          >
-          <a
-            class="m2"
-            title="21 tìm kiếm Máy tính, 11 tìm kiếm Điện thoại"
-            type="button"
-            role="button"
-            tabindex="0"
-            >21 · 11</a
-          >
-          <a
-            class="m3"
-            title="31 tìm kiếm Máy tính, 21 tìm kiếm Điện thoại"
-            type="button"
-            role="button"
-            tabindex="0"
-            >31 · 21</a
-          >
-          <a
-            class="m4"
-            title="51 tìm kiếm Máy tính, 31 tìm kiếm Điện thoại"
-            type="button"
-            role="button"
-            tabindex="0"
-            >51 · 31</a
-          >
-        </div>
+        <div class="quotaMeta"><small id="quotaUpdated">Chưa có dữ liệu</small><button id="refreshQuota" type="button">Làm mới</button></div>
+        <p id="quotaEstimate" class="fieldHint">Đọc quota trước khi chạy</p>
         <button
           id="searchTrigger"
           class="trigger"
-          title="Tự chạy search rồi tự làm hết nhiệm vụ kiếm điểm"
+          title="Tự tìm kiếm rồi làm các nhiệm vụ đơn giản, rõ ràng"
           type="button"
           role="button"
         >
-          Làm nhiệm vụ
+          Làm phần còn thiếu
         </button>
-        <p class="triggerHint">Tự search + click hết nhiệm vụ kiếm điểm</p>
-        <p class="runStatus" id="runStatus" aria-live="polite"></p>
+        <p class="triggerHint">Tự tìm kiếm + làm nhiệm vụ đơn giản, rõ ràng</p>
+        <div class="runCard" id="runCard" aria-live="polite" hidden>
+          <div class="runCardHead">
+            <strong id="runTitle"></strong>
+            <span id="runDetail"></span>
+          </div>
+          <p id="runMeta"></p>
+          <div class="progressBar"><div class="progress"></div><div class="failed"></div></div>
+        </div>
+        <div class="lastReport" id="lastReport" hidden>
+          <span>Lần chạy gần nhất</span>
+          <strong id="lastReportTitle"></strong>
+          <small id="lastReportDetail"></small>
+        </div>
         <p id="activityIssue" class="activityIssue" role="alert" hidden></p>
       </section>
 
@@ -100,46 +69,31 @@
       <section id="schedule" hidden>
         <p class="fieldHint">Dùng kế hoạch ở trên. Chọn thời điểm extension tự chạy.</p>
         <div id="scheduleMode" class="mode">
-          <a
+          <button
             class="m1"
             title="Không tự chạy theo lịch"
             type="button"
-            role="button"
-            tabindex="0"
-            >Thủ công</a
-          >
-          <a
+            >Thủ công</button>
+          <button
             class="m2"
             title="Tự chạy khi mở trình duyệt"
             type="button"
-            role="button"
-            tabindex="0"
-            >Khi mở trình duyệt</a
-          >
-          <a
+            >Khi mở trình duyệt</button>
+          <button
             class="m3"
             title="Tự chạy mỗi ~5 phút (ngẫu nhiên)"
             type="button"
-            role="button"
-            tabindex="0"
-            >~5 phút/lần</a
-          >
-          <a
+            >~5 phút/lần</button>
+          <button
             class="m4"
             title="Tự chạy mỗi ~15 phút (ngẫu nhiên)"
             type="button"
-            role="button"
-            tabindex="0"
-            >~15 phút/lần</a
-          >
-          <a
+            >~15 phút/lần</button>
+          <button
             class="m5"
             title="Tự chạy mỗi ngày một lần vào giờ đã chọn (chỉ khi Chrome đang mở)"
             type="button"
-            role="button"
-            tabindex="0"
-            >Hàng ngày lúc…</a
-          >
+            >Hàng ngày lúc…</button>
         </div>
         <div class="menuItem" id="scheduleTimeRow" hidden>
           <label for="scheduleTime">Giờ chạy hằng ngày:</label>
@@ -170,23 +124,26 @@
       >
         <span class="advToggle-label">
           <span class="material-symbols-outlined">settings</span>
-          Nâng cao
+          Tùy chọn
         </span>
         <span class="material-symbols-outlined chev">expand_more</span>
       </button>
       <div id="advanced" class="advanced" hidden>
-        <p class="advGroup">Điều chỉnh kế hoạch</p>
+        <h2>Giới hạn mỗi lần chạy</h2>
         <div class="tile">
-          <div class="input">
-            <label for="searchMin">Tối thiểu</label>
-            <input type="number" name="searchMin" id="searchMin" />
-          </div>
-          <div class="input">
-            <label for="searchMax">Tối đa</label>
-            <input type="number" name="searchMax" id="searchMax" />
-          </div>
+          <div class="input"><label for="searchDesk">Máy tính</label><input type="number" id="searchDesk" name="searchDesk" /></div>
+          <div class="input"><label for="searchMob">Điện thoại</label><input type="number" id="searchMob" name="searchMob" /></div>
         </div>
-        <p class="fieldHint">Thời gian chờ giữa mỗi lần tìm (giây)</p>
+        <p class="fieldHint">Giới hạn lượt tìm — Máy tính · Điện thoại</p>
+        <div id="searchMode" class="mode">
+          <button class="m1" type="button">11 · 0</button>
+          <button class="m2" type="button">21 · 11</button>
+          <button class="m3" type="button">31 · 21</button>
+          <button class="m4" type="button">51 · 31</button>
+        </div>
+        <button id="activitiesOnly" class="advToggle" type="button">Chỉ làm nhiệm vụ (0 lượt tìm)</button>
+
+        <p class="advGroup">Tùy chọn</p>
         <div class="menuItem">
           <label for="niche">Chủ đề tìm kiếm:</label>
           <select name="niche" id="niche">
@@ -212,35 +169,19 @@
             title="Bật/Tắt tự làm nhiệm vụ sau khi search"
           />
         </div>
-        <div class="menuItem">
-          <label for="activity">Chỉ làm nhiệm vụ (không search):</label>
-          <button
-            id="activity"
-            title="Làm các nhiệm vụ kiếm điểm hằng ngày"
-            type="button"
-            role="button"
-          >
-            Chạy
-          </button>
-          <div class="progressBar">
-            <div class="progress act"></div>
-          </div>
-        </div>
-
         <p class="advGroup">Cài đặt &amp; bảo trì</p>
         <section id="settings">
           <p class="subGroup">Thiết lập chạy</p>
           <div class="menuItem">
             <span id="deviceName">Thiết bị giả lập</span>
-            <a
+            <button
               id="resetDevice"
+              type="button"
               title="Bấm để chọn lại thiết bị giả lập mới (ngẫu nhiên)"
-              role="button"
               aria-label="Đổi thiết bị giả lập"
-              tabindex="0"
             >
               <span class="material-symbols-outlined">refresh</span>
-            </a>
+            </button>
           </div>
           <div class="menuItem">
             <label for="clear">Tối ưu điểm Mobile (bản vá v1.5.8):</label>
@@ -264,6 +205,18 @@
 
           <details class="maintenance">
             <summary>Bảo trì, nhật ký &amp; đặt lại</summary>
+          <p class="subGroup">Nhịp tìm kiếm</p>
+          <div class="tile compactTile">
+            <div class="input">
+              <label for="searchMin">Tối thiểu</label>
+              <input type="number" name="searchMin" id="searchMin" />
+            </div>
+            <div class="input">
+              <label for="searchMax">Tối đa</label>
+              <input type="number" name="searchMax" id="searchMax" />
+            </div>
+          </div>
+          <p class="fieldHint">Thời gian chờ giữa mỗi lần tìm (giây)</p>
           <p class="subGroup">Dữ liệu &amp; nhật ký</p>
           <div class="menuItem">
             <label for="download"

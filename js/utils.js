@@ -235,6 +235,32 @@ function applyConfigDefaults(target, stored) {
   }
 
   target.control = target.control || {};
+  target.runtime = target.runtime || {};
+  target.runtime.schemaVersion = 2;
+  target.runReports = (Array.isArray(target.runReports)
+    ? target.runReports
+    : []
+  )
+    .slice(0, 7)
+    .map((report) => ({
+      version: 1,
+      startedAt: Number(report?.startedAt) || null,
+      finishedAt: Number(report?.finishedAt) || null,
+      durationMs: Math.max(0, Number(report?.durationMs) || 0),
+      mode: report?.mode ? String(report.mode) : null,
+      total: Math.max(0, Number(report?.total) || 0),
+      done: Math.max(0, Number(report?.done) || 0),
+      failed: Math.max(0, Number(report?.failed) || 0),
+      tasks: { completed: Math.max(0, Number(report?.tasks?.completed) || 0), uncertain: Math.max(0, Number(report?.tasks?.uncertain) || 0) },
+      result: {
+        outcome: String(report?.result?.outcome || "uncertain"),
+        item: String(report?.result?.item || "run"),
+        reason: report?.result?.reason
+          ? String(report.result.reason)
+          : null,
+        at: Number(report?.result?.at) || null,
+      },
+    }));
   delete target.control.consent;
   delete target.pro;
   if (!storedPatchDefaultApplied) {
@@ -299,6 +325,12 @@ async function resetRuntime(config) {
     config.runtime.failed = 0;
     config.runtime.mobile = 0;
     config.runtime.act = 0;
+    config.runtime.stopping = 0;
+    config.runtime.retry = 0;
+    config.runtime.lastAction = null;
+    config.runtime.deadlineAt = null;
+    config.runtime.searchDeadlineAt = null;
+    config.runtime.activityDeadlineAt = null;
 
     await set(config);
     if (logs) {

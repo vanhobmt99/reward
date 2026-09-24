@@ -29,6 +29,10 @@ describe("js/service.js still uses the shipped helpers", () => {
     { name: "isCompleteSearchCount", from: "/js/search-results.js" },
     { name: "isTabGoneError", from: "/js/tab-errors.js" },
     { name: "listenForTabGone", from: "/js/tab-errors.js" },
+    { name: "classifyAutomaticTask", from: "/js/activity-policy.js" },
+    { name: "createRunDeadlines", from: "/js/run-deadline.js" },
+    { name: "createRunCheckpoint", from: "/js/run-checkpoint.js" },
+    { name: "createRunResult", from: "/js/run-results.js" },
   ];
 
   for (const { name, from } of required) {
@@ -61,5 +65,21 @@ describe("js/service.js still uses the shipped helpers", () => {
     const waitForUrlBody = service.slice(waitForUrlStart, service.indexOf("async function completeRewardActivityTab"));
     assert.match(waitBody, /listenForTabGone\(chrome\.tabs/);
     assert.match(waitForUrlBody, /listenForTabGone\(chrome\.tabs/);
+  });
+
+  it("uses two attempts and acknowledges stop before asynchronous cleanup", () => {
+    assert.match(service, /const searchAttempts = 2;/);
+    assert.match(service, /const emulationAttempts = 2;/);
+    const stopCase = service.slice(
+      service.indexOf("case ACTIONS.STOP"),
+      service.indexOf("case ACTIONS.CLEAR_BROWSING_DATA"),
+    );
+    assert.ok(stopCase.indexOf("reply({") < stopCase.indexOf("handleUserStop()"));
+  });
+
+  it("limits manual starts by live counters and filters automatic offers", () => {
+    assert.match(service, /refreshSearchCountersFromRewards\(\)/);
+    assert.doesNotMatch(service, /force:\s*true/);
+    assert.match(service, /classifyAutomaticTask\(offer\)\.safe/);
   });
 });
