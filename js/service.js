@@ -1,4 +1,3 @@
-import { createQuotaSnapshot, applyQuotaCooldown, QUOTA_COOLDOWN_MS } from "/js/search-quota.js";
 import { queries as queriesBase } from "/js/queries.js";
 import { queriesExtra } from "/js/queries_extra.js";
 import { queriesV1 } from "/js/queries_v1.js";
@@ -70,15 +69,14 @@ import {
   createSolveActivityScript,
   createClaimReadyScript,
   createRewardsSectionReadyProbe,
+  createDailySetStateProbe,
 } from "/js/injected-scripts.js";
-import { collectPendingOffers, getConfirmedActivityKeys } from "/js/activity-offers.js";
-import { classifyAutomaticTask } from "/js/activity-policy.js";
+import { collectPendingOffers } from "/js/activity-offers.js";
 import { runDailySet } from "/js/daily-set-runner.js";
 import {
   ACTIVITY_ISSUE_KEY,
   checkActivityAccess,
 } from "/js/activity-access.js";
-import { createDailySetStateProbe } from "/js/injected-scripts.js";
 import { createCookieHelpers } from "/js/cookies.js";
 import {
   installGlobalCrashHandlers,
@@ -88,23 +86,21 @@ import {
 
 import {
   isRewardActivityUrl as isTrustedRewardActivityUrl,
-  isActivityOpenedTab as isTrustedActivityOpenedTab,
+  tabsToClose,
   DEFAULT_REWARD_HOSTS as msDomains,
 } from "/js/activity-tabs.js";
+import { trustedPressCommands } from "/js/trusted-press.js";
+import { DONATE_PAGE, shouldShowDonateOnInstall } from "/js/welcome.js";
 import {
   isConfirmedBingSearchUrl,
   isCompleteSearchCount,
 } from "/js/search-results.js";
-import { isTabGoneError, listenForTabGone } from "/js/tab-errors.js";
 import {
   DEFAULT_POINTS_PER_SEARCH,
   createSearchCreditGoal,
   isSearchCreditGoalReached,
   shouldContinueSearch,
   assessSearchCheckpoint,
-  getRemainingSearches,
-  limitPlanForRemainingQuota,
-  getSearchCheckpointInterval,
 } from "/js/search-credit.js";
 import {
   fetchSuggestions,
@@ -121,22 +117,6 @@ import {
   planLongPauseIndices,
   longPauseMs,
 } from "/js/human-behavior.js";
-import {
-  createRunDeadlines,
-  startActivityDeadline,
-  isRunDeadlineExpired,
-} from "/js/run-deadline.js";
-import {
-  RUN_CHECKPOINT_KEY,
-  createRunCheckpoint,
-  validateRunCheckpoint,
-  getCheckpointRemainingPlan,
-} from "/js/run-checkpoint.js";
-import {
-  RUN_OUTCOMES,
-  createRunResult,
-  appendRunReport,
-} from "/js/run-results.js";
 
 installGlobalCrashHandlers();
 
@@ -149,111 +129,11 @@ let logs = config?.control?.log;
 let needPatch = false;
 let searchQuery = "";
 let usedSearchQueryTemplates = new Set();
-let deadlineLoggedForSession = null;
-let liveSearchQuota = null;
-let liveSearchQuotaAt = 0;
-let userStopTask = null;
-let rewardsAccountKey = null;
-const activityAttemptKeys = new Set();
-const activityConfirmedKeys = new Set();
-
-function markRuntimeAction(action, extra = {}) {
-  if (!config?.runtime) return;
-  config.runtime.lastAction = action || null;
-  config.runtime.updatedAt = Date.now();
-  Object.assign(config.runtime, extra);
-}
-
-function markDeadlineIfExpired() {
-  if (!config?.runtime?.running || !isRunDeadlineExpired(config.runtime)) {
-    return false;
-  }
-  const sessionId = config.runtime.currentSession?.id || "unknown";
-  config.runtime.outcome = RUN_OUTCOMES.UNCERTAIN;
-  config.runtime.outcomeReason = "deadline_exceeded";
-  config.runtime.running = 0;
-  config.runtime.stopping = 1;
-  config.runtime.act = 0;
-  markRuntimeAction("Hết thời gian cho bước hiện tại");
-  if (deadlineLoggedForSession !== sessionId) {
-    deadlineLoggedForSession = sessionId;
-    logs &&
-      log(
-        `[DEADLINE] Session ${sessionId} exceeded its active deadline.`,
-        "warning",
-      );
-  }
-  return true;
-}
-
-async function saveRunCheckpoint(requestedPlan = config?.runtime?.requestedPlan) {
-  const session = config?.runtime?.currentSession;
-  if (!session || !requestedPlan || !config.runtime.running || config.runtime.stopping) return;
-  const checkpoint = createRunCheckpoint({
-    sessionId: session.id,
-    mode: session.type,
-    phase: config?.runtime?.currentPhase,
-    requested: requestedPlan,
-    progress: config.runtime.phaseProgress,
-    deadlines: config.runtime,
-    accountKey: rewardsAccountKey,
-  });
-  await chrome.storage.local.set({ [RUN_CHECKPOINT_KEY]: checkpoint });
-}
-
-async function readValidRunCheckpoint() {
-  const stored = await chrome.storage.local.get(RUN_CHECKPOINT_KEY);
-  const checkpoint = stored?.[RUN_CHECKPOINT_KEY];
-  const terminalReport = config.runReports?.some((report) => report.startedAt === checkpoint?.startedAt);
-  const validation = validateRunCheckpoint(checkpoint, { verifyAccount: false });
-  if (!validation.valid || terminalReport) {
-    if (checkpoint) await chrome.storage.local.remove(RUN_CHECKPOINT_KEY);
-    return null;
-  }
-  return checkpoint;
-}
-
-async function clearRunCheckpoint() {
-  await chrome.storage.local.remove(RUN_CHECKPOINT_KEY);
-}
-
-async function recordRunReport(success, fallbackReason = null) {
-  const runtime = config?.runtime || {};
-  const finishedAt = Date.now();
-  const done = Number(runtime.done) || 0;
-  const failed = Number(runtime.failed) || 0;
-  const unconfirmedTasks = activityAttemptKeys.size - activityConfirmedKeys.size;
-  const outcome =
-    runtime.outcome ||
-    (unconfirmedTasks > 0 ? RUN_OUTCOMES.UNCERTAIN : null) ||
-    (success
-      ? failed > 0
-        ? RUN_OUTCOMES.UNCERTAIN
-        : RUN_OUTCOMES.COMPLETED
-      : done === 0
-        ? RUN_OUTCOMES.FAILED
-        : RUN_OUTCOMES.UNCERTAIN);
-  const result = createRunResult({
-    outcome,
-    item: runtime.currentPhase || runtime.mode || "run",
-    reason: runtime.outcomeReason || (unconfirmedTasks > 0 ? "activity_unconfirmed" : fallbackReason),
-    at: finishedAt,
-  });
-  const report = {
-    version: 1,
-    startedAt: Number(runtime.startedAt) || finishedAt,
-    finishedAt,
-    durationMs: Math.max(0, finishedAt - (Number(runtime.startedAt) || finishedAt)),
-    mode: runtime.mode || runtime.currentSession?.type || null,
-    total: Number(runtime.total) || 0,
-    done,
-    failed,
-    tasks: { completed: activityConfirmedKeys.size, uncertain: activityAttemptKeys.size - activityConfirmedKeys.size },
-    result,
-  };
-  config.runReports = appendRunReport(config.runReports, report, 7);
-  await set(config);
-}
+// Set for the duration of a manual run: start the plan the user asked for
+// without trimming against today's counters, and do not divert into login-click
+// recovery mid-run. Mid-run still stops on a full or frozen Rewards counter —
+// more uncredited volume is wasted; the user can re-run when ready.
+let ignoreDailyQuota = false;
 // Topic run for the current session: keeps consecutive queries inside one
 // subject for a few searches instead of re-rolling the category every time.
 let nicheSession = null;
@@ -282,13 +162,13 @@ const preSubmitDelayMax = 1700;
 const failedSearchSettleDelayMin = 1200;
 const failedSearchSettleDelayMax = 2600;
 // How many times one search is re-attempted before it counts as failed.
-const searchAttempts = 2;
+const searchAttempts = 3;
 // Emulation setup is on the critical path of every mobile search, so it gets a
 // budget of its own. 1s (the old `shortestDelay`) was tight enough that a CDP
 // command issued while the tab was still loading routinely timed out and failed
 // the whole search.
 const emulationCommandTimeout = 5000;
-const emulationAttempts = 2;
+const emulationAttempts = 3;
 const searchRetryDelayMin = 1800;
 const searchRetryDelayMax = 3200;
 const finalSearchSettleDelayMax = 8000;
@@ -382,7 +262,6 @@ const activityMemoryKey = "activityMemory";
 const maxActivityRunsPerDay = 6;
 
 function isRuntimeActive() {
-  if (markDeadlineIfExpired()) return false;
   return Boolean(config?.runtime?.running || config?.runtime?.act);
 }
 
@@ -463,28 +342,15 @@ function applyConfig(stored) {
       "failed",
       "total",
       "rsaTab",
-      "rsaWindowId",
-      "phaseProgress",
       "running",
       "currentSession",
       "currentPhase",
       "act",
       "mobile",
       "mode",
-      "stopping",
-      "startedAt",
-      "updatedAt",
-      "lastAction",
-      "retry",
-      "deadlineAt",
-      "searchDeadlineAt",
-      "activityDeadlineAt",
-      "requestedPlan",
-      "outcome",
-      "outcomeReason",
     ];
     const preservedRuntime = {};
-    if (config?.runtime?.currentSession) {
+    if (config?.runtime?.running) {
       for (const key of activeRunKeys) {
         if (config.runtime[key] !== undefined) {
           preservedRuntime[key] = config.runtime[key];
@@ -492,10 +358,9 @@ function applyConfig(stored) {
       }
     }
     applyConfigDefaults(config, stored);
-    const migratedRuntime = config.runtime || {};
     config.runtime = {
       ...runtimeDefaults,
-      ...migratedRuntime,
+      ...(stored.runtime || {}),
       ...preservedRuntime,
     };
     countersReset = resetStaleSearchCounters();
@@ -516,23 +381,19 @@ function clearActiveRuntimeState(reason = "stale_runtime") {
   if (!hadActiveState) return false;
 
   config.runtime.running = 0;
-  config.runtime.stopping = 0;
   config.runtime.mode = null;
   config.runtime.currentSession = null;
   config.runtime.currentPhase = null;
   config.runtime.act = 0;
   config.runtime.mobile = 0;
   config.runtime.rsaTab = null;
-  config.runtime.rsaWindowId = null;
-  config.runtime.retry = 0;
-  config.runtime.updatedAt = Date.now();
   logs && log(`[RUNTIME] - Cleared ${reason} active runtime state.`, "warning");
   return true;
 }
 
 async function applyStoredConfig(stored, reason = "load") {
   const hadLiveInMemoryRun = Boolean(
-    config?.runtime?.currentSession,
+    config?.runtime?.running && config?.runtime?.currentSession,
   );
   let countersReset = false;
   if (stored) {
@@ -544,33 +405,31 @@ async function applyStoredConfig(stored, reason = "load") {
       log(`[CONFIG] Reset in-memory config to defaults (${reason}).`, "update");
     return false;
   }
-  if (!config?.runtime?.running && !config?.runtime?.stopping && !config?.runtime?.currentSession) {
+  if (!config?.runtime?.running) {
     if (countersReset) await set(config);
     return false;
   }
   if (hadLiveInMemoryRun) return false;
-  // Capture the orphaned automation tab and dedicated window BEFORE
-  // clearActiveRuntimeState nulls them, so we can detach and close them.
+  // Capture the orphaned automation tab BEFORE clearActiveRuntimeState nulls it,
+  // so we can detach its debugger and close it after a worker death.
   const staleTab = Number(config?.runtime?.rsaTab) || null;
-  const staleWindow = Number(config?.runtime?.rsaWindowId) || null;
   const cleared = clearActiveRuntimeState(`${reason} stale session`);
   if (cleared || countersReset) {
     await set(config);
   }
   if (cleared) {
-    await cleanupStaleRun(staleTab, staleWindow);
+    await cleanupStaleRun(staleTab);
   }
   return cleared;
 }
 
 // Recover from a service worker that died mid-run: restore any login cookies we
 // had cleared for the mobile phase, then detach the debugger from and close the
-// orphaned automation tab/window so its "being debugged" banner and mobile emulation
+// orphaned automation tab so its "being debugged" banner and mobile emulation
 // don't linger.
-async function cleanupStaleRun(staleTab, staleWindow = null) {
+async function cleanupStaleRun(staleTab) {
   await restorePendingAuthCookies();
   staleTab = Number(staleTab) || null;
-  staleWindow = Number(staleWindow) || null;
   if (staleTab) {
     try {
       await chrome.debugger.detach({ tabId: staleTab });
@@ -586,18 +445,6 @@ async function cleanupStaleRun(staleTab, staleWindow = null) {
         );
     } catch (error) {
       /* tab already closed */
-    }
-  }
-  if (staleWindow) {
-    try {
-      await chrome.windows.remove(staleWindow);
-      logs &&
-        log(
-          `[RECOVERY] Closed orphaned automation window ${staleWindow}.`,
-          "warning",
-        );
-    } catch (error) {
-      /* window already closed */
     }
   }
 }
@@ -842,8 +689,7 @@ const RunCoordinator = createRunCoordinator({
   log: (msg, level) => logs && log(msg, level),
 });
 const isSessionStillActive = createIsSessionStillActive(
-  () => config?.runtime?.running && !config.runtime.stopping
-    ? config.runtime.currentSession : null,
+  () => config?.runtime?.currentSession,
 );
 
 function limitSearchPlanForToday(searches, options = {}) {
@@ -853,10 +699,7 @@ function limitSearchPlanForToday(searches, options = {}) {
     freshCounters && isDailySearchCounterDone(config?.runtime?.pcSearch);
   const mobileDone =
     freshCounters && isDailySearchCounterDone(config?.runtime?.mobileSearch);
-  let plan = limitPlanForCompletedCounters(basePlan, { pcDone, mobileDone });
-  if (freshCounters && Date.now() - liveSearchQuotaAt < 120_000) {
-    plan = limitPlanForRemainingQuota(plan, liveSearchQuota);
-  }
+  const plan = limitPlanForCompletedCounters(basePlan, { pcDone, mobileDone });
   if (!options.silent && (pcDone || mobileDone)) {
     logs &&
       log(
@@ -864,11 +707,14 @@ function limitSearchPlanForToday(searches, options = {}) {
         "update",
       );
   }
-  return applyQuotaCooldown(plan, config.quotaCooldown);
+  return plan;
 }
 
 function hasActivityQuota() {
   if (!config?.control?.act) return false;
+  // A user-started run (Search / Làm nhiệm vụ) must still click today's cards
+  // even if a scheduled run already counted against the daily quota.
+  if (ignoreDailyQuota) return true;
   if (config?.runtime?.activityRunDate !== todayKey()) return true;
   return (
     (Number(config?.runtime?.activityRunsToday) || 0) < maxActivityRunsPerDay
@@ -982,35 +828,17 @@ async function isRewardsSessionActive(tabId = null) {
   return false;
 }
 
-async function getRewardsAccountKey(status) {
-  const identity = status?.userId || status?.cid || status?.memberId;
-  if (!identity) return null;
-  const bytes = new TextEncoder().encode(String(identity));
-  const digest = await crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-function deferSearchQuota(key) {
-  config.quotaCooldown ||= { desk: 0, mob: 0 };
-  config.quotaCooldown[key] = Date.now() + QUOTA_COOLDOWN_MS;
-}
-
 async function refreshSearchCountersFromRewards() {
-  rewardsAccountKey = null;
-  liveSearchQuota = null;
-  liveSearchQuotaAt = 0;
   try {
     const response = await fetch("https://rewards.bing.com/api/getuserinfo", {
       cache: "no-store",
       credentials: "include",
-      signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
     const data = await response.json();
-    const userStatus = data?.status?.userStatus || data?.dashboard?.userStatus;
-    const counters = userStatus?.counters;
+    const counters = data?.status?.userStatus?.counters;
     if (!counters || typeof counters !== "object" || Array.isArray(counters)) {
       throw new Error(
         "Rewards counters are unavailable for the current session.",
@@ -1022,10 +850,6 @@ async function refreshSearchCountersFromRewards() {
       "mobileSearch",
     );
     config.runtime.searchCounterDate = todayKey();
-    rewardsAccountKey = await getRewardsAccountKey(userStatus);
-    liveSearchQuota = buildRewardsSnapshot(userStatus);
-    liveSearchQuotaAt = Date.now();
-    config.searchQuota = createQuotaSnapshot(liveSearchQuota, liveSearchQuotaAt);
     await set(config);
     logs &&
       log(
@@ -1034,8 +858,6 @@ async function refreshSearchCountersFromRewards() {
       );
     return true;
   } catch (error) {
-    if (config.searchQuota) config.searchQuota.unavailable = true;
-    await set(config).catch(() => {});
     logs &&
       log(
         `[COUNTERS] Could not refresh Rewards counters: ${error.message}`,
@@ -1203,7 +1025,6 @@ async function fetchRewardsUserinfo() {
     {
       cache: "no-store",
       credentials: "include",
-      signal: AbortSignal.timeout(10_000),
       headers: {
         Accept: "application/json",
         "X-Requested-With": "XMLHttpRequest",
@@ -1219,10 +1040,9 @@ async function fetchRewardsUserinfo() {
 async function fetchRewardsSnapshot() {
   try {
     const data = await fetchRewardsUserinfo();
-    const snapshot = buildRewardsSnapshot(data?.status?.userStatus || data?.dashboard?.userStatus || {});
-    config.searchQuota = createQuotaSnapshot(snapshot);
-    await set(config);
-    return snapshot;
+    return buildRewardsSnapshot(
+      data?.status?.userStatus || data?.dashboard?.userStatus || {},
+    );
   } catch (error) {
     logs &&
       log(
@@ -1265,7 +1085,7 @@ async function delay(ms, interruptible = true) {
   // (it belongs to the old run but won't interfere with the new one since
   // the coordinator prevents concurrent runs).
   const startedAtGen = _getRunGeneration();
-  if (interruptible && (!config?.runtime?.running || markDeadlineIfExpired())) {
+  if (interruptible && !config?.runtime?.running) {
     logs && log(`[DELAY] Interrupted - not running.`, "warning");
     return false;
   }
@@ -1277,7 +1097,7 @@ async function delay(ms, interruptible = true) {
     const intervalId = setInterval(() => {
       // Only interrupt if both: run stopped AND no new run has started
       if (
-        (!config?.runtime?.running || markDeadlineIfExpired()) &&
+        !config?.runtime?.running &&
         _getRunGeneration() === startedAtGen &&
         !resolved
       ) {
@@ -1370,7 +1190,6 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
     let resolved = false;
     let timer = null;
     let interruptTimer = null;
-    let stopWatchingRemoved = null;
 
     const done = (success, message = `Tab ${tabId} loaded successfully.`) => {
       if (resolved) return;
@@ -1378,7 +1197,6 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
       clearTimeout(timer);
       clearInterval(interruptTimer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      if (stopWatchingRemoved) stopWatchingRemoved();
       logs &&
         log(
           `[WAIT] ${message} (Took ${Date.now() - startTime}ms) - ${
@@ -1415,10 +1233,6 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
 
     chrome.tabs.onUpdated.addListener(onUpdated);
 
-    stopWatchingRemoved = listenForTabGone(chrome.tabs, tabId, () => {
-      done(false, `Tab ${tabId} was closed while waiting to load.`);
-    });
-
     chrome.tabs
       .get(tabId)
       .then((tab) => {
@@ -1427,10 +1241,6 @@ async function wait(tabId, interruptible = true, { awayFrom = null } = {}) {
         }
       })
       .catch((error) => {
-        if (isTabGoneError(error)) {
-          done(false, `Tab ${tabId} was closed while waiting to load.`);
-          return;
-        }
         log(`[WAIT] Error getting tab ${tabId}: ${error.message}`, "error");
         done(false, `Error getting tab ${tabId}: ${error.message}`);
       });
@@ -1531,17 +1341,6 @@ async function bootstrapConfig() {
     const stored = await get();
     await applyStoredConfig(stored, "bootstrap");
     await ensureAlarms();
-    const checkpoint = await readValidRunCheckpoint();
-    if (checkpoint) {
-      await chrome.alarms.create("resume_checkpoint", {
-        when: Date.now() + 1000,
-      });
-      logs &&
-        log(
-          `[RECOVERY] Recent checkpoint found; queued a guarded resume.`,
-          "warning",
-        );
-    }
     logs && log("[BOOTSTRAP] - Config loaded.", "update");
   } catch (error) {
     log(`[BOOTSTRAP] - Error loading config: ${error.message}`, "error");
@@ -1628,9 +1427,7 @@ async function handleUserStop() {
     searchKeepaliveCancel = null;
   }
   const rsaTab = Number(config?.runtime?.rsaTab);
-  const rsaWindowId = Number(config?.runtime?.rsaWindowId);
-  RunCoordinator.requestStop();
-  await clearRunCheckpoint();
+  await RunCoordinator.stopCurrentSession("user_requested");
   if (rsaTab) {
     await detach(rsaTab, false).catch(() => {});
     try {
@@ -1639,14 +1436,6 @@ async function handleUserStop() {
       logs &&
         log(`[STOP] Could not close RSA tab: ${error.message}`, "warning");
     }
-  }
-  if (rsaWindowId) {
-    try {
-      await chrome.windows.remove(rsaWindowId);
-    } catch (error) {
-      /* window already closed */
-    }
-    config.runtime.rsaWindowId = null;
   }
   config.runtime.rsaTab = null;
   config.runtime.mobile = 0;
@@ -2313,21 +2102,7 @@ async function click(interruptible = true) {
   let success = false;
   try {
     await enableDomains(tabId);
-    const candidateSelectors = config?.runtime?.mobile
-      ? [
-          "#mHamburger",
-          "#dots_overflow_menu_container",
-          "#HBContent",
-          "[aria-label*='menu' i]",
-        ]
-      : [
-          "#id_l",
-          "a.id_button#id_l",
-          "a.id_button",
-          "#b_idProviders",
-          "#id_rh_w",
-          ".b_clickarea",
-        ];
+    const selector = config?.runtime?.mobile ? "#mHamburger" : ".b_clickarea";
 
     const { root: documentNode } = await race(
       chrome.debugger.sendCommand({ tabId }, "DOM.getDocument"),
@@ -2341,166 +2116,131 @@ async function click(interruptible = true) {
       return false;
     }
 
-    // A selector existing in the DOM is not enough: Bing retains hidden
-    // compatibility nodes such as #id_s at 0×0. Only select a target after its
-    // visible box and hit-test point have both been verified.
-    const getVerifiedPoint = async (nodeId, selector) => {
-      const { model } = await race(
-        chrome.debugger.sendCommand({ tabId }, "DOM.getBoxModel", { nodeId }),
-        shortestDelay,
-        `Failed to get box model for node ID ${nodeId} within timeout.`,
-      ).catch(() => ({}));
-      const quad = model?.content;
-      if (!Array.isArray(quad) || quad.length < 8) return null;
-      const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number);
-      const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number);
-      if (![...xs, ...ys].every(Number.isFinite)) return null;
-      const left = Math.min(...xs);
-      const right = Math.max(...xs);
-      const top = Math.min(...ys);
-      const bottom = Math.max(...ys);
-      if (right - left < 8 || bottom - top < 8) return null;
-      const x = (left + right) / 2;
-      const y = (top + bottom) / 2;
-      const probe = await race(
-        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: `(() => { const target = document.querySelector(${JSON.stringify(selector)}); const hit = document.elementFromPoint(${JSON.stringify(x)}, ${JSON.stringify(y)}); return Boolean(target && hit && (target === hit || target.contains(hit))); })()`,
-          returnByValue: true,
-        }),
-        shortestDelay,
-      ).catch(() => null);
-      return probe?.result?.value ? { x, y } : null;
-    };
-
-    let nodeId = null;
-    let chosenSelector = null;
-    let point = null;
-    for (const sel of candidateSelectors) {
-      try {
-        const query = await race(
-          chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
-            nodeId: documentNode.nodeId,
-            selector: sel,
-          }),
-          shortestDelay,
-        );
-        if (!query?.nodeId) continue;
-        await race(
-          chrome.debugger.sendCommand({ tabId }, "DOM.scrollIntoViewIfNeeded", {
-            nodeId: query.nodeId,
-          }),
-          shortestDelay,
-        ).catch(() => {});
-        await delay(shortestDelay, interruptible);
-        const candidatePoint = await getVerifiedPoint(query.nodeId, sel);
-        if (!candidatePoint) {
-          logs && log(`[CLICK] - Skipping hidden, covered, or stale target ${sel}.`, "warning");
-          continue;
-        }
-        nodeId = query.nodeId;
-        chosenSelector = sel;
-        point = candidatePoint;
-        break;
-      } catch (_) {}
-    }
-
+    const { nodeId } = await race(
+      chrome.debugger.sendCommand({ tabId }, "DOM.querySelector", {
+        nodeId: documentNode.nodeId,
+        selector: selector,
+      }),
+      shortestDelay,
+      `Failed to query selector "${selector}" for tab ${tabId} within timeout.`,
+    );
     if (!nodeId) {
       logs &&
         log(
-          `[CLICK] - No target node found via CDP selectors in tab ${tabId}; delegating to content script.`,
-          "warning",
+          `[CLICK] - Failed to get node ID for selector "${selector}" in tab ${tabId}.`,
+          "error",
         );
-    } else {
-      if (point) {
-        let { x, y } = point;
-        logs &&
-          log(
-            `[CLICK] - Click coordinates for tab ${tabId} (${chosenSelector}): (${x}, ${y})`,
-            "update",
-          );
-
-        if (config?.runtime?.mobile) {
-          point = await getVerifiedPoint(nodeId, chosenSelector);
-          if (!point) throw new Error("Mobile click target moved or became covered.");
-          ({ x, y } = point);
-          await race(
-            chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
-              type: "touchStart",
-              touchPoints: [
-                {
-                  x,
-                  y,
-                  radiusX: 5,
-                  radiusY: 5,
-                  force: 0.5,
-                },
-              ],
-            }),
-            shortestDelay,
-            `Failed to dispatch touch event for tab ${tabId} within timeout.`,
-          );
-        } else {
-          // Move the cursor toward the target along a human-like curved path,
-          // emitting several intermediate mouseMoved events, before pressing.
-          const path = generateMousePath(lastMouseX, lastMouseY, x, y);
-          for (const point of path) {
-            await race(
-              chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-                type: "mouseMoved",
-                x: point.x,
-                y: point.y,
-              }),
-              shortestDelay,
-            ).catch(() => {}); // ignore transient path errors, keep moving
-            await delay(8 + Math.random() * 12, interruptible);
-          }
-          lastMouseX = x;
-          lastMouseY = y;
-          await delay(80 + Math.random() * 120, interruptible);
-          point = await getVerifiedPoint(nodeId, chosenSelector);
-          if (!point) throw new Error("Click target moved or became covered.");
-          ({ x, y } = point);
-          await race(
-            chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mousePressed",
-              button: "left",
-              x,
-              y,
-              clickCount: 1,
-            }),
-            shortestDelay,
-            `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
-          );
-        }
-        await delay(80 + Math.random() * 120, interruptible);
-        if (config?.runtime?.mobile) {
-          await race(
-            chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
-              type: "touchEnd",
-              touchPoints: [],
-            }),
-            shortestDelay,
-            `Failed to dispatch touch event for tab ${tabId} within timeout.`,
-          );
-        } else {
-          await race(
-            chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-              type: "mouseReleased",
-              button: "left",
-              x,
-              y,
-              clickCount: 1,
-            }),
-            shortestDelay,
-            `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
-          );
-        }
-        logs &&
-          log(`[CLICK] - Click operation completed for tab ${tabId}.`, "success");
-        await delay(shortestDelay, interruptible);
-        success = true;
-      }
+      return false;
     }
+
+    await race(
+      chrome.debugger.sendCommand({ tabId }, "DOM.scrollIntoViewIfNeeded", {
+        nodeId: nodeId,
+      }),
+      shortestDelay,
+      `Failed to scroll into view for node ID ${nodeId} in tab ${tabId} within timeout.`,
+    );
+    await delay(shortestDelay, interruptible);
+
+    const { model } = await race(
+      chrome.debugger.sendCommand({ tabId }, "DOM.getBoxModel", {
+        nodeId: nodeId,
+      }),
+      shortestDelay,
+      `Failed to get box model for node ID ${nodeId} in tab ${tabId} within timeout.`,
+    );
+    if (!model || !Array.isArray(model.content) || model.content.length < 6) {
+      logs &&
+        log(
+          `[CLICK] - Invalid box model for node ID ${nodeId} in tab ${tabId}.`,
+          "error",
+        );
+      return false;
+    }
+
+    const quad = model.content;
+    const x = (quad[0] + quad[2]) / 2;
+    const y = (quad[1] + quad[5]) / 2;
+    logs &&
+      log(
+        `[CLICK] - Click coordinates for tab ${tabId}: (${x}, ${y})`,
+        "update",
+      );
+
+    if (config?.runtime?.mobile) {
+      await race(
+        chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
+          type: "touchStart",
+          touchPoints: [
+            {
+              x,
+              y,
+              radiusX: 5,
+              radiusY: 5,
+              force: 0.5,
+            },
+          ],
+        }),
+        shortestDelay,
+        `Failed to dispatch touch event for tab ${tabId} within timeout.`,
+      );
+    } else {
+      // Move the cursor toward the target along a human-like curved path,
+      // emitting several intermediate mouseMoved events, before pressing.
+      const path = generateMousePath(lastMouseX, lastMouseY, x, y);
+      for (const point of path) {
+        await race(
+          chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+            type: "mouseMoved",
+            x: point.x,
+            y: point.y,
+          }),
+          shortestDelay,
+        ).catch(() => {}); // ignore transient path errors, keep moving
+        await delay(8 + Math.random() * 12, interruptible);
+      }
+      lastMouseX = x;
+      lastMouseY = y;
+      await delay(80 + Math.random() * 120, interruptible);
+      await race(
+        chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+          type: "mousePressed",
+          button: "left",
+          x,
+          y,
+          clickCount: 1,
+        }),
+        shortestDelay,
+        `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
+      );
+    }
+    await delay(80 + Math.random() * 120, interruptible);
+    if (config?.runtime?.mobile) {
+      await race(
+        chrome.debugger.sendCommand({ tabId }, "Input.dispatchTouchEvent", {
+          type: "touchEnd",
+          touchPoints: [],
+        }),
+        shortestDelay,
+        `Failed to dispatch touch event for tab ${tabId} within timeout.`,
+      );
+    } else {
+      await race(
+        chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
+          type: "mouseReleased",
+          button: "left",
+          x,
+          y,
+          clickCount: 1,
+        }),
+        shortestDelay,
+        `Failed to dispatch mouse event for tab ${tabId} within timeout.`,
+      );
+    }
+    logs &&
+      log(`[CLICK] - Click operation completed for tab ${tabId}.`, "success");
+    await delay(shortestDelay, interruptible);
+    success = true;
   } catch (error) {
     log(`[CLICK] - Error during click operation: ${error.message}`, "error");
   }
@@ -2616,7 +2356,7 @@ async function refillQueryBurst() {
 // A refill can come back empty because the seed it rolled was already searched
 // this run. That is a reason to roll again, not to give up on the search — but
 // bound the attempts so an exhausted pool cannot spin here.
-const MAX_REFILL_ATTEMPTS = 2;
+const MAX_REFILL_ATTEMPTS = 3;
 
 async function nextBurstQuery() {
   for (let attempt = 0; queryBurst.length === 0; attempt++) {
@@ -2868,110 +2608,6 @@ function isBingPageUrl(url) {
     return host === "bing.com" || host.endsWith(".bing.com");
   } catch {
     return false;
-  }
-}
-
-/**
- * Simulates human-like organic interaction on the Bing SERP:
- * 1. Natural smooth scroll down to scan results (300-720px).
- * 2. Natural reading pause (1.4s - 3.0s).
- * 3. Occasional secondary scroll adjustment (up/down).
- * 4. ~25% probability of clicking an organic, non-ad result into a background tab,
- *    dwelling for 2-3.5s, before stabilizeAfterSearch cleans it up.
- */
-async function simulateOrganicSerpInteraction(tabId, interruptible = true) {
-  if (config?.control?.organicSerp === 0) return;
-  tabId = Number(tabId);
-  if (!tabId) return;
-
-  try {
-    const currentUrl = await getTabUrl(tabId);
-    if (
-      !currentUrl ||
-      !isBingPageUrl(currentUrl) ||
-      !currentUrl.includes("/search")
-    ) {
-      return;
-    }
-
-    // 1. Initial short pause to simulate user taking in the results page
-    await delay(Math.floor(400 + Math.random() * 400), interruptible);
-
-    // 2. Smooth scroll down to browse search results
-    const scrollDown = Math.floor(300 + Math.random() * 420);
-    await chrome.debugger
-      .sendCommand({ tabId }, "Runtime.evaluate", {
-        expression: `window.scrollBy({ top: ${scrollDown}, behavior: 'smooth' });`,
-      })
-      .catch(() => {});
-
-    // 3. Human reading pause
-    const readingPause = Math.floor(1400 + Math.random() * 1600);
-    await delay(readingPause, interruptible);
-
-    // 4. Occasional minor scroll adjustment (50% chance)
-    if (Math.random() < 0.5) {
-      const adjustment = Math.floor((Math.random() - 0.3) * 250);
-      await chrome.debugger
-        .sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: `window.scrollBy({ top: ${adjustment}, behavior: 'smooth' });`,
-        })
-        .catch(() => {});
-      await delay(Math.floor(600 + Math.random() * 700), interruptible);
-    }
-
-    // 5. Natural organic result click (~25% probability)
-    const shouldClickOrganic = Math.random() < 0.25;
-    if (shouldClickOrganic) {
-      const clickRes = await chrome.debugger
-        .sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: `(() => {
-            try {
-              const organicLinks = Array.from(
-                document.querySelectorAll('#b_results .b_algo h2 a, #b_results .b_algo .b_title a')
-              );
-              const eligible = organicLinks.filter((a) => {
-                const href = a?.href || '';
-                return (
-                  href.startsWith('http') &&
-                  !href.includes('bing.com') &&
-                  !href.includes('microsoft.com') &&
-                  !href.includes('live.com') &&
-                  !a.closest('.b_ad, [data-clarity]')
-                );
-              });
-              if (eligible.length === 0) return null;
-              // Choose among top 3 results
-              const chosen = eligible[Math.floor(Math.random() * Math.min(eligible.length, 3))];
-              const rect = chosen.getBoundingClientRect();
-              if (rect.width > 0 && rect.height > 0) {
-                chosen.target = '_blank';
-                chosen.click();
-                return chosen.href;
-              }
-              return null;
-            } catch (e) {
-              return null;
-            }
-          })()`,
-          returnByValue: true,
-        })
-        .catch(() => null);
-
-      const clickedUrl = clickRes?.result?.value;
-      if (clickedUrl) {
-        logs &&
-          log(
-            `[SEARCH] Organic interaction: visited ${clickedUrl.slice(0, 48)}...`,
-            "update",
-          );
-        // Dwell 2-3.5s on the result page like a real user
-        const dwellTime = Math.floor(2000 + Math.random() * 1500);
-        await delay(dwellTime, interruptible);
-      }
-    }
-  } catch (error) {
-    // Best-effort only — never interrupt a successful search
   }
 }
 
@@ -3247,8 +2883,13 @@ async function search(searches, min, max, interruptible = true) {
   const getReadDelay = () =>
     humanReadDelayMs(min, max, { boost: checkpointDelayBoost });
 
-  // Preserve the configured pacing and periodic breaks.
-  const longPauseIndices = planLongPauseIndices(searches);
+  // A couple of "stepped away from the keyboard" gaps per run. A session with
+  // no interruption at all is itself unusual. Forced manual runs skip these —
+  // the user is watching and can re-run if points lag; multi-minute idle gaps
+  // only help scheduled unattended sessions look natural.
+  const longPauseIndices = ignoreDailyQuota
+    ? new Set()
+    : planLongPauseIndices(searches);
 
   // ── Point-crediting checkpoint ─────────────────────────────────────────────
   // A search that navigated successfully can still earn nothing (half-logged-in
@@ -3263,9 +2904,13 @@ async function search(searches, min, max, interruptible = true) {
   // already full", and every search between the quota filling up and the next
   // checkpoint is ~17s spent earning nothing. Tightening the interval costs two
   // extra getuserinfo calls per phase and saves up to two wasted searches.
-  // Recovery is bounded to two attempts. The second pass uses the boosted
-  // pacing below; after that the phase reports an uncertain result.
-  const MAX_STALL_RECOVERIES = 2;
+  const CHECKPOINT_EVERY = 4;
+  // 3, not 2: the Rewards counter lags the searches that fed it, so a stalled
+  // reading is often just a slow API and not a dead session. Two consecutive
+  // stalls used to end the phase outright and drop every remaining search;
+  // requiring a third costs one extra recovery round and avoids abandoning a
+  // run that was still being credited.
+  const MAX_STALL_RECOVERIES = 3;
   // The Rewards counter is published in batches that can lag the searches that
   // fed it by minutes, so 2 rechecks (~6s) was nowhere near enough to tell "API
   // is behind" from "account is not being credited" — and guessing the latter
@@ -3284,10 +2929,29 @@ async function search(searches, min, max, interruptible = true) {
   const ensureRewardsSessionForSearches = async (reason) => {
     if (await checkRewardsApiSession()) return true;
 
-    for (let attempt = 1; attempt <= 2; attempt++) {
+    // A forced manual run is "search what I asked for". The only time it must
+    // open the account menu is right after the mobile phase wiped cookies —
+    // that is the only path that actually logged the user out. Mid-run stall
+    // recovery (API lag, full counter, flaky getuserinfo) must NOT steal the
+    // tab into hamburger / .b_clickarea clicks while searches are waiting.
+    const reasonText = String(reason || "");
+    const mobileLoginRequired =
+      mobilePhase &&
+      (reasonText.includes("before the first mobile") ||
+        reasonText.includes("after the mobile patch"));
+    if (ignoreDailyQuota && !mobileLoginRequired) {
       logs &&
         log(
-          `[SEARCH] Rewards session unavailable ${reason}; re-login attempt ${attempt}/2.`,
+          `[SEARCH] Forced run: skipping login-click recovery ${reasonText}; keeping the search tab on Bing.`,
+          "warning",
+        );
+      return false;
+    }
+
+    for (let attempt = 1; attempt <= 3; attempt++) {
+      logs &&
+        log(
+          `[SEARCH] Rewards session unavailable ${reason}; re-login attempt ${attempt}/3.`,
           "warning",
         );
       const beforeNav = await getTabUrl(tabId);
@@ -3299,7 +2963,7 @@ async function search(searches, min, max, interruptible = true) {
       await click(interruptible);
       // The sign-in click hands the tab to login.live.com and back. That chain
       // routinely outlasts a single mediumDelay, and the next attempt's
-      // tabs.update used to cancel it mid-redirect, so both attempts
+      // tabs.update used to CANCEL it mid-redirect — so all three attempts
       // failed and the entire mobile phase (all of the day's mobile points) was
       // dropped. Let the chain land on Bing again, then poll the API instead of
       // sampling it once.
@@ -3325,7 +2989,20 @@ async function search(searches, min, max, interruptible = true) {
         `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter frozen while searches kept running; recovering session (attempt ${consecutiveStallRecoveries}).`,
         "warning",
       );
-
+    // Forced manual runs (desktop AND mobile): never divert into the
+    // account-menu click flow merely because the Rewards API is delayed or the
+    // counter is lagging. Slow down, stay on Bing, and keep searching.
+    if (ignoreDailyQuota) {
+      const beforeNav = await getTabUrl(tabId);
+      await chrome.tabs.update(tabId, { url: bing, active: true });
+      await wait(tabId, interruptible, { awayFrom: beforeNav });
+      if (mobilePhase) {
+        await ensureEmulation(tabId);
+      }
+      await delay(shortestDelay, interruptible);
+      checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
+      return true;
+    }
     if (
       !(await ensureRewardsSessionForSearches(
         "while checking credited searches",
@@ -3350,6 +3027,10 @@ async function search(searches, min, max, interruptible = true) {
     let snapshot = await fetchRewardsSnapshot();
     if (!snapshot || !checkpointSnapshot) return snapshot;
 
+    // A manual run follows its requested search count. Waiting for a lagging
+    // Rewards counter at every checkpoint only stalls the mobile phase.
+    if (ignoreDailyQuota) return snapshot;
+
     for (let attempt = 0; attempt < POINT_SETTLE_RECHECKS; attempt++) {
       const current = Number(snapshot[counterField]);
       const previous = Number(checkpointSnapshot[counterField]);
@@ -3363,14 +3044,7 @@ async function search(searches, min, max, interruptible = true) {
 
   const verifySearchProgress = async () => {
     const snapshot = await fetchSettledRewardsSnapshot();
-    if (getRemainingSearches(snapshot, counterField, counterMaxField) === null) {
-      earlyStopReason = "quota_unavailable";
-      markRuntimeAction("Tạm dừng: chưa đọc được quota tìm kiếm", {
-        outcome: RUN_OUTCOMES.UNCERTAIN,
-        outcomeReason: earlyStopReason,
-      });
-      return;
-    }
+    if (!snapshot) return;
     if (!checkpointSnapshot) {
       checkpointSnapshot = snapshot;
       latestRewardsSnapshot = snapshot;
@@ -3404,23 +3078,54 @@ async function search(searches, min, max, interruptible = true) {
         );
     } else if (
       progressed <= 0 &&
+      (getScoreDelta(checkpointSnapshot, snapshot) || 0) > 0
+    ) {
+      // The per-counter field is stale but the account balance moved, so the
+      // searches ARE being credited — Bing simply has not published the search
+      // counter yet. Treating this as a stall would abandon a healthy run.
+      consecutiveStallRecoveries = 0;
+      logs &&
+        log(
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter is lagging, but the points balance moved; continuing.`,
+          "update",
+        );
+    } else if (progressed <= 0 && ignoreDailyQuota) {
+      // A confirmed Bing navigation already counts for this manual run.
+      // The Rewards counter can publish mobile points in a later batch.
+      logs &&
+        log(
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter has not updated yet; continuing the requested searches.`,
+          "update",
+        );
+    } else if (
+      progressed <= 0 &&
       consecutiveStallRecoveries < MAX_STALL_RECOVERIES
     ) {
       const recovered = await recoverFromStall();
-      if (!recovered) {
+      if (!recovered && !ignoreDailyQuota) {
         earlyStopReason = "session_unavailable";
+      } else if (!recovered) {
+        // Forced run already skipped login-click recovery; keep searching and
+        // re-read the counter at the next checkpoint.
+        logs &&
+          log(
+            "[SEARCH] Forced manual run: login recovery skipped/failed; will reassess at next checkpoint.",
+            "warning",
+          );
       }
     } else if (progressed <= 0) {
-      // Stop bounded recovery without spending the rest of the plan on an
-      // unchanged counter. A later run will read the quota again.
-      earlyStopReason = "quota_stalled";
-      markRuntimeAction("Tạm dừng: quota chưa tăng sau hai lần kiểm tra lại", {
-        outcome: RUN_OUTCOMES.UNCERTAIN,
-        outcomeReason: earlyStopReason,
-      });
+      // Recovery has been tried the allowed number of times and the counter
+      // still has not moved. This is ambiguous: either Bing has stopped
+      // crediting, or it is simply publishing the counter in a slow batch. The
+      // extension cannot tell the two apart, and stopping used to drop every
+      // remaining search of the plan — so finish the plan instead and let the
+      // counter catch up. `quotaFull` above still stops the phase, because a
+      // full counter is the one case where further searches provably earn
+      // nothing.
+      checkpointDelayBoost = Math.min(checkpointDelayBoost * 2, 4);
       logs &&
         log(
-          `[SEARCH] Counter did not move across ${consecutiveStallRecoveries} recovery attempts; pausing remaining searches.`,
+          `[SEARCH] ${mobilePhase ? "Mobile" : "PC"} counter did not move across ${consecutiveStallRecoveries} recovery attempts; slowing down but finishing the requested plan (counter may still be lagging).`,
           "warning",
         );
     } else {
@@ -3428,7 +3133,9 @@ async function search(searches, min, max, interruptible = true) {
       if (missingPoints > 0) {
         // Slow the pace slightly when Bing is under-crediting, but do not add
         // extra searches — the plan size stays what the user typed.
-        checkpointDelayBoost = Math.min(checkpointDelayBoost * 1.5, 4);
+        if (!ignoreDailyQuota) {
+          checkpointDelayBoost = Math.min(checkpointDelayBoost * 1.5, 4);
+        }
         logs &&
           log(
             `[SEARCH] Counter increased by ${progressed}/${expected} expected points; ${missingPoints} point(s) short (no make-up — plan stays fixed).`,
@@ -3481,7 +3188,7 @@ async function search(searches, min, max, interruptible = true) {
       const sessionReady = await ensureRewardsSessionForSearches(
         "before the first mobile search",
       );
-      if (!sessionReady) {
+      if (!sessionReady && !ignoreDailyQuota) {
         earlyStopReason = "session_unavailable";
         logs &&
           log(
@@ -3490,39 +3197,17 @@ async function search(searches, min, max, interruptible = true) {
           );
         return false;
       }
-
+      if (!sessionReady) {
+        logs &&
+          log(
+            "[SEARCH] Forced manual run: mobile login was not confirmed, continuing requested searches.",
+            "warning",
+          );
+      }
     }
 
     checkpointSnapshot = await fetchRewardsSnapshot();
     latestRewardsSnapshot = checkpointSnapshot;
-    const remainingSearches = getRemainingSearches(
-      checkpointSnapshot, counterField, counterMaxField,
-    );
-    if (remainingSearches === null) {
-      deferSearchQuota(mobilePhase ? "mob" : "desk");
-      markRuntimeAction("Tạm dừng: chưa đọc được quota tìm kiếm", {
-        outcome: RUN_OUTCOMES.UNCERTAIN,
-        outcomeReason: "quota_unavailable",
-      });
-      await set(config);
-      return false;
-    }
-    const trimmedSearches = Math.min(searches, remainingSearches);
-    config.runtime.total = Math.max(0,
-      (Number(config.runtime.total) || 0) - (searches - trimmedSearches));
-    if (config.runtime.requestedPlan) {
-      config.runtime.requestedPlan[mobilePhase ? "mob" : "desk"] = trimmedSearches;
-    }
-    searches = trimmedSearches;
-    markRuntimeAction(`Còn tối đa ${searches} lượt tìm kiếm ${mobilePhase ? "điện thoại" : "máy tính"}`);
-    await set(config);
-    await saveRunCheckpoint();
-    if (searches === 0) {
-      const progress = config.runtime.phaseProgress?.[mobilePhase ? "mob" : "desk"];
-      if (progress) progress.finished = true;
-      await saveRunCheckpoint();
-      return true;
-    }
     // Diagnostic only — never used to extend the plan past desk/mob counts.
     creditGoal = createSearchCreditGoal(
       checkpointSnapshot,
@@ -3539,12 +3224,6 @@ async function search(searches, min, max, interruptible = true) {
     ) {
       const i = attemptedIterations;
       attemptedIterations++;
-      const progress = config.runtime.phaseProgress?.[mobilePhase ? "mob" : "desk"];
-      if (progress) progress.attempted = attemptedIterations;
-      await saveRunCheckpoint();
-      markRuntimeAction(`Đang xử lý lượt ${i + 1}/${searches}`, {
-        retry: 0,
-      });
       if (interruptible && !config?.runtime?.running) {
         logs &&
           log("[SEARCH] Interrupted, skipping search operation.", "warning");
@@ -3572,11 +3251,17 @@ async function search(searches, min, max, interruptible = true) {
         const sessionReady = await ensureRewardsSessionForSearches(
           "after the mobile patch cleared cookies",
         );
-        if (!sessionReady) {
+        if (!sessionReady && !ignoreDailyQuota) {
           earlyStopReason = "session_unavailable";
           break;
         }
-
+        if (!sessionReady) {
+          logs &&
+            log(
+              "[SEARCH] Forced manual run: post-clear login was not confirmed, continuing.",
+              "warning",
+            );
+        }
       }
       const readDelay = getReadDelay();
       // A search can fail for reasons that clear up on their own: the input was
@@ -3600,9 +3285,6 @@ async function search(searches, min, max, interruptible = true) {
       // can actually score.
       let reuseOnRetry = true;
       for (let attempt = 1; attempt <= searchAttempts; attempt++) {
-        markRuntimeAction(`Đang xử lý lượt ${i + 1}/${searches}`, {
-          retry: attempt - 1,
-        });
         queried = await query(interruptible, {
           reuse: attempt > 1 && reuseOnRetry && searchQuery !== previousQuery,
         });
@@ -3661,11 +3343,7 @@ async function search(searches, min, max, interruptible = true) {
       }
       if (!queried) {
         config.runtime.failed++;
-        markRuntimeAction(`Không nhập được lượt ${i + 1}/${searches}`, {
-          retry: 0,
-        });
         await set(config);
-        await saveRunCheckpoint();
         await updateProgressBadge();
         logs &&
           log(
@@ -3697,28 +3375,11 @@ async function search(searches, min, max, interruptible = true) {
             "success",
           );
       }
-      if (searched) {
-        await simulateOrganicSerpInteraction(tabId, interruptible);
-      }
+      // No organic result clicks — only clean up ad/popup tabs and keep RSA on Bing.
       await stabilizeAfterSearch(tabId, tabsBeforeSearch, interruptible);
-      markRuntimeAction(
-        searched
-          ? `Đã xác nhận lượt ${i + 1}/${searches}`
-          : `Không xác nhận được lượt ${i + 1}/${searches}`,
-        { retry: 0 },
-      );
       await set(config);
-      await saveRunCheckpoint();
       await updateProgressBadge();
       await waitAfterIteration(i, Math.max(shortestDelay, readDelay), searched);
-      if (
-        (searched && successfulSearches - checkpointDone >=
-          getSearchCheckpointInterval(latestRewardsSnapshot, counterField, counterMaxField)) ||
-        attemptedIterations >= searches
-      ) {
-        await verifySearchProgress();
-        if (earlyStopReason) break;
-      }
       if (searched && longPauseIndices.has(i) && i < searches - 1) {
         const pause = longPauseMs();
         logs &&
@@ -3727,6 +3388,13 @@ async function search(searches, min, max, interruptible = true) {
             "update",
           );
         await delay(pause, interruptible);
+      }
+      if (
+        (searched && successfulSearches - checkpointDone >= CHECKPOINT_EVERY) ||
+        attemptedIterations >= searches
+      ) {
+        await verifySearchProgress();
+        if (earlyStopReason) break;
       }
     }
     if (
@@ -3737,13 +3405,6 @@ async function search(searches, min, max, interruptible = true) {
       await verifySearchProgress();
     }
   } finally {
-    const progress = config.runtime.phaseProgress?.[mobilePhase ? "mob" : "desk"];
-    if (progress && (earlyStopReason === "quota_full" || progress.attempted >= searches)) progress.finished = true;
-    if (["quota_unavailable", "quota_stalled", "session_unavailable"].includes(earlyStopReason)) {
-      deferSearchQuota(mobilePhase ? "mob" : "desk");
-      await set(config);
-    }
-    await saveRunCheckpoint();
     if (searchKeepaliveCancel) {
       searchKeepaliveCancel();
       searchKeepaliveCancel = null;
@@ -3766,7 +3427,11 @@ async function search(searches, min, max, interruptible = true) {
       );
     return false;
   }
-  // A full live counter is success even when fewer searches were needed.
+  // Stopping because the daily counter is full is the *goal*, not a shortfall —
+  // the remaining planned searches would have earned nothing. A frozen counter
+  // no longer stops the phase at all (it is indistinguishable from a lagging
+  // API, and stopping dropped the rest of the plan), so the only early stop left
+  // is an unusable Rewards session.
   if (earlyStopReason === "quota_full") {
     logs &&
       log(
@@ -3775,10 +3440,10 @@ async function search(searches, min, max, interruptible = true) {
       );
     return true;
   }
-  if (earlyStopReason) {
+  if (earlyStopReason === "session_unavailable") {
     logs &&
       log(
-        `[SEARCH] Phase stopped early at ${successfulSearches}/${searches} searches: ${earlyStopReason}.`,
+        `[SEARCH] Phase stopped early at ${successfulSearches}/${searches} searches: the Rewards session was unavailable.`,
         "warning",
       );
     return false;
@@ -3789,10 +3454,6 @@ async function search(searches, min, max, interruptible = true) {
     creditGoal &&
     !isSearchCreditGoalReached(creditGoal, latestRewardsSnapshot, counterField)
   ) {
-    markRuntimeAction("Đã chạy đủ lượt dự kiến; quota chưa được xác nhận", {
-      outcome: RUN_OUTCOMES.UNCERTAIN,
-      outcomeReason: "quota_unconfirmed",
-    });
     logs &&
       log(
         `[SEARCH] Plan finished ${successfulSearches}/${searches} searches; Rewards counter ${latestRewardsSnapshot?.[counterField] ?? "unknown"}/${creditGoal.target} (short — re-run if needed).`,
@@ -3831,7 +3492,6 @@ async function waitForUrl(
     let resolved = false;
     let timer = null;
     let interruptTimer = null;
-    let stopWatchingRemoved = null;
 
     const done = (success, url = "") => {
       if (resolved) return;
@@ -3839,7 +3499,6 @@ async function waitForUrl(
       clearTimeout(timer);
       clearInterval(interruptTimer);
       chrome.tabs.onUpdated.removeListener(onUpdated);
-      if (stopWatchingRemoved) stopWatchingRemoved();
       logs &&
         log(
           `[WAIT URL] ${success ? "Matched" : "Timed out"} for tab ${tabId}: ${url} (${Date.now() - startTime}ms)`,
@@ -3887,15 +3546,6 @@ async function waitForUrl(
     }
 
     chrome.tabs.onUpdated.addListener(onUpdated);
-
-    stopWatchingRemoved = listenForTabGone(chrome.tabs, tabId, () => {
-      done(false, "");
-    });
-
-    chrome.tabs.get(tabId).catch(() => {
-      done(false, "");
-    });
-
     checkCurrentUrl();
   });
 }
@@ -3967,31 +3617,14 @@ async function completeRewardActivityTab(tabId) {
         break;
       }
       const freshPoint = await refreshSolvePressPoint(tabId, value.targetKey);
-      let pressed = false;
-      if (value.pressPoint && freshPoint) {
-        pressed = await dispatchTrustedPress(tabId, freshPoint, "ACTIVITY SOLVER");
-      }
-      if (!pressed) {
+      if (
+        !value.pressPoint ||
+        !freshPoint ||
+        !(await dispatchTrustedPress(tabId, freshPoint, "ACTIVITY SOLVER"))
+      ) {
         logs &&
           log(
-            `[ACTIVITY] Reward tab ${tabId} target moved or CDP point stale; fallback to direct solve click.`,
-            "warning",
-          );
-        const fallbackRes = await race(
-          chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-            expression: createSolveActivityScript(false),
-            returnByValue: true,
-          }),
-          mediumDelay,
-        ).catch(() => null);
-        if (fallbackRes?.result?.value?.clicked) {
-          pressed = true;
-        }
-      }
-      if (!pressed) {
-        logs &&
-          log(
-            `[ACTIVITY] Reward tab ${tabId} target could not be clicked.`,
+            `[ACTIVITY] Reward tab ${tabId} target moved before the trusted click.`,
             "warning",
           );
         break;
@@ -4031,48 +3664,45 @@ function getTabActivityUrl(tab) {
   return String(tab?.url || tab?.pendingUrl || "").toLowerCase();
 }
 
-function isActivityOpenedTab(tab, mainTabId, existingTabIds) {
-  return isTrustedActivityOpenedTab(tab, mainTabId, existingTabIds);
-}
-
 async function processOpenedActivityTabs(
   mainTabId,
   existingTabIds,
   returnUrl = rewards + "dashboard",
 ) {
-  const allTabs = await chrome.tabs.query({});
-  const newTabs = allTabs.filter((tab) =>
-    isActivityOpenedTab(tab, mainTabId, existingTabIds),
-  );
   let processed = 0;
-  for (const tab of newTabs) {
-    const loaded = await waitForUrl(
-      tab.id,
-      (url) => Boolean(url && url !== "about:blank"),
-      longestDelay,
-    );
-    const tabUrl = loaded.url || (await getTabUrl(tab.id));
-    if (!isRewardActivityUrl(tabUrl)) {
+  const handled = new Set();
+  // A second look uses the same pre-click snapshot, so a tab that is still
+  // about:blank, has no opener, or appears only after the first close is
+  // still closed before this pass returns.
+  for (let sweep = 0; sweep < 2; sweep++) {
+    const allTabs = await chrome.tabs.query({});
+    const newTabs = tabsToClose(allTabs, mainTabId, existingTabIds);
+    for (const tab of newTabs) {
+      let tabUrl = getTabActivityUrl(tab);
+      let completed = false;
+      if (!handled.has(tab.id)) {
+        const loaded = await waitForUrl(
+          tab.id,
+          (url) => Boolean(url && url !== "about:blank"),
+          longestDelay,
+        );
+        tabUrl = loaded.url || (await getTabUrl(tab.id));
+        if (isRewardActivityUrl(tabUrl)) {
+          completed = await completeRewardActivityTab(tab.id);
+          await delay(shortestDelay, false);
+          if (completed) processed++;
+        }
+        handled.add(tab.id);
+      }
+      try {
+        await chrome.tabs.remove(tab.id);
+      } catch (error) {}
       logs &&
         log(
-          `[ACTIVITY] Leaving non-reward tab open: ${tab.id} (${tabUrl || "unknown url"})`,
+          `[ACTIVITY] Closed opened tab: ${tab.id} (${tabUrl || "unknown url"}) - ${completed ? "completed" : "closed"}`,
           "update",
         );
-      continue;
     }
-    const completed = await completeRewardActivityTab(tab.id);
-    await delay(shortestDelay, true);
-    try {
-      await chrome.tabs.remove(tab.id);
-    } catch (error) {}
-    if (completed) {
-      processed++;
-    }
-    logs &&
-      log(
-        `[ACTIVITY] Closed opened tab: ${tab.id} (${tabUrl || "unknown url"}) - ${completed ? "completed" : "not completed"}`,
-        completed ? "update" : "warning",
-      );
   }
 
   const mainUrl = await getTabUrl(mainTabId);
@@ -4093,59 +3723,54 @@ async function processOpenedActivityTabs(
 }
 
 async function closeOpenedActivityTabs(mainTabId, existingTabIds) {
-  const allTabs = await chrome.tabs.query({});
-  const openedTabs = allTabs.filter(
-    (tab) =>
-      isActivityOpenedTab(tab, mainTabId, existingTabIds) &&
-      isRewardActivityUrl(getTabActivityUrl(tab)),
-  );
   let closed = 0;
-  for (const tab of openedTabs) {
-    try {
-      await chrome.tabs.remove(tab.id);
-      closed++;
-      logs &&
-        log(
-          `[ACTIVITY] Cleanup closed leftover tab: ${tab.id} (${tab.url || tab.pendingUrl || "unknown url"})`,
-          "update",
-        );
-    } catch (error) {}
+  for (let sweep = 0; sweep < 2; sweep++) {
+    const allTabs = await chrome.tabs.query({});
+    const openedTabs = tabsToClose(allTabs, mainTabId, existingTabIds);
+    if (openedTabs.length === 0) break;
+    for (const tab of openedTabs) {
+      try {
+        await chrome.tabs.remove(tab.id);
+        closed++;
+        logs &&
+          log(
+            `[ACTIVITY] Cleanup closed leftover tab: ${tab.id} (${tab.url || tab.pendingUrl || "unknown url"})`,
+            "update",
+          );
+      } catch (error) {}
+    }
   }
   return closed;
 }
 
 async function dispatchTrustedPress(tabId, point, context = "ACTIVITY") {
-  const x = Number(point?.x);
-  const y = Number(point?.y);
-  if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+  const commands = trustedPressCommands(point, {
+    touch: Boolean(config?.runtime?.mobile),
+  });
+  if (commands.length === 0) return false;
   try {
-    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-      type: "mouseMoved",
-      x,
-      y,
-    });
-    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-      type: "mousePressed",
-      x,
-      y,
-      button: "left",
-      buttons: 1,
-      clickCount: 1,
-    });
-    await delay(80, true);
-    await chrome.debugger.sendCommand({ tabId }, "Input.dispatchMouseEvent", {
-      type: "mouseReleased",
-      x,
-      y,
-      button: "left",
-      buttons: 0,
-      clickCount: 1,
-    });
+    await chrome.tabs.update(tabId, { active: true });
+    await chrome.debugger
+      .sendCommand({ tabId }, "Page.bringToFront")
+      .catch(() => {});
+    for (const command of commands) {
+      await chrome.debugger.sendCommand(
+        { tabId },
+        command.method,
+        command.params,
+      );
+      if (
+        command.params.type === "mousePressed" ||
+        command.params.type === "touchStart"
+      ) {
+        await delay(80, false);
+      }
+    }
     return true;
   } catch (error) {
     logs &&
       log(
-        `[${context}] Trusted click failed at (${Math.round(x)}, ${Math.round(y)}): ${error.message}`,
+        `[${context}] Trusted click failed at (${Math.round(Number(point?.x))}, ${Math.round(Number(point?.y))}): ${error.message}`,
         "warning",
       );
     return false;
@@ -4242,7 +3867,7 @@ async function refreshActivityPressPoint(
 // well before the cards render. Poll for the target section heading so the
 // first click pass doesn't fire against an empty page (the classic "first icon
 // click misses" failure). Returns true once the heading exists, false on
-// timeout. Callers fail closed instead of clicking against an incomplete SPA.
+// timeout — callers still proceed, the pass scripts have their own retry.
 async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
   // Streamed cards can remain in hidden placeholders while the tab is in the
   // background. Bring it forward before waiting for React to reveal them.
@@ -4267,28 +3892,14 @@ async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
       shortestDelay * 3,
     ).catch(() => null);
     if (result?.result?.value === true) return true;
-    await delay(500, true);
+    await delay(500, false);
   }
   logs &&
     log(
-      `[ACTIVITY] Target section was not ready within ${Math.round(timeoutMs / 1000)}s; skipping this activity phase.`,
+      `[ACTIVITY] Section heading not detected within ${Math.round(timeoutMs / 1000)}s; proceeding anyway.`,
       "warning",
     );
   return false;
-}
-
-async function verifyActivityKeys(keys) {
-  keys.forEach((key) => activityAttemptKeys.add(key));
-  const confirmed = new Set();
-  for (let attempt = 0; attempt < 2 && isRuntimeActive() && confirmed.size < keys.length; attempt++) {
-    await delay(2500, true);
-    try {
-      const payload = await fetchRewardsUserinfo();
-      for (const key of getConfirmedActivityKeys(payload, keys)) confirmed.add(key);
-    } catch (error) { logs && log("[ACTIVITY] Completion status unavailable.", "warning"); }
-  }
-  confirmed.forEach((key) => activityConfirmedKeys.add(key));
-  return [...confirmed];
 }
 
 async function runApiOfferPass(tabId, memory, sessionVisited, sessionMisses) {
@@ -4304,13 +3915,10 @@ async function runApiOfferPass(tabId, memory, sessionVisited, sessionMisses) {
     return 0;
   }
 
-  const pendingOffers = collectPendingOffers(data).filter((offer) => offer.url);
-  const offers = pendingOffers.filter(
-    (offer) => classifyAutomaticTask(offer).safe,
-  );
+  const offers = collectPendingOffers(data).filter((offer) => offer.url);
   logs &&
     log(
-      `[ACTIVITY] API selected ${offers.length}/${pendingOffers.length} simple pending offer(s).`,
+      `[ACTIVITY] API listed ${offers.length} pending offer(s).`,
       offers.length > 0 ? "update" : "warning",
     );
   if (offers.length === 0) return 0;
@@ -4332,8 +3940,8 @@ async function runApiOfferPass(tabId, memory, sessionVisited, sessionMisses) {
         openerTabId: tabId,
       });
       offerTabId = Number(offerTab.id);
-      await completeRewardActivityTab(offerTabId);
-      const ok = (await verifyActivityKeys([offer.key])).length === 1;
+      const completed = await completeRewardActivityTab(offerTabId);
+      const ok = completed || offer.visitCompletes;
       if (ok) {
         processed++;
         confirmActivityKeys(memory, sessionVisited, sessionMisses, [offer.key]);
@@ -4369,7 +3977,7 @@ async function runApiOfferPass(tabId, memory, sessionVisited, sessionMisses) {
         } catch (error) {}
       }
     }
-    await delay(shortestDelay, true);
+    await delay(shortestDelay, false);
   }
   await saveActivityMemory(memory);
   return processed;
@@ -4390,7 +3998,7 @@ async function runDashboardActivityPass(
   // Promo/streak toasts often appear mid-run and cover the next card; clear
   // them at the start of every pass rather than only once before the loop.
   await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
-  await delay(shortestDelay, true);
+  await delay(shortestDelay, false);
 
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
@@ -4430,33 +4038,20 @@ async function runDashboardActivityPass(
       value.openedKeys?.[0],
       "DAILY SET",
     );
-    let pressed = false;
-    if (freshPoint) {
-      pressed = await dispatchTrustedPress(
+    if (!freshPoint) {
+      logs &&
+        log(
+          `[ACTIVITY] Pass ${pass} daily-set target became stale before click.`,
+          "warning",
+        );
+      clickedItems = [];
+    } else {
+      const pressed = await dispatchTrustedPress(
         tabId,
         freshPoint,
         "DAILY SET",
       );
-    }
-    if (!pressed) {
-      logs &&
-        log(
-          `[ACTIVITY] Pass ${pass} daily-set target point stale or press failed; fallback to direct DOM click.`,
-          "warning",
-        );
-      const fallbackResult = await race(
-        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: createDashboardActivityScript([...blockedKeys], 1, false),
-          returnByValue: true,
-        }),
-        mediumDelay,
-      ).catch(() => null);
-      const fallbackVal = fallbackResult?.result?.value;
-      if (fallbackVal?.clicked?.length) {
-        clickedItems = fallbackVal.clicked;
-      } else {
-        clickedItems = [];
-      }
+      if (!pressed) clickedItems = [];
     }
   }
   if (value.reason) {
@@ -4481,13 +4076,8 @@ async function runDashboardActivityPass(
       );
   }
 
-  if (clickedItems.length > 0) {
-    await delay(4000 + Math.random() * 2500, true);
-  }
-  const processedTabs =
-    clickedItems.length > 0
-      ? await processOpenedActivityTabs(tabId, existingTabIds)
-      : 0;
+  await delay(4000 + Math.random() * 2500, false);
+  const processedTabs = await processOpenedActivityTabs(tabId, existingTabIds);
   const nonExpandClicks = clickedItems.filter((item) => item.type !== "expand");
   if (nonExpandClicks.length > 0 || processedTabs > 0) {
     await chrome.tabs.update(tabId, {
@@ -4495,31 +4085,51 @@ async function runDashboardActivityPass(
       active: true,
     });
     await wait(tabId);
-    await delay(mediumDelay, true);
+    await delay(mediumDelay, false);
   }
-  const afterScore =
-    clickedItems.length > 0 || processedTabs > 0
-      ? await fetchRewardsSnapshot()
-      : beforeScore;
-  const pointDelta = getScoreDelta(beforeScore, afterScore);
+  const afterScore = await fetchRewardsSnapshot();
+  let pointDelta = getScoreDelta(beforeScore, afterScore);
   if (afterScore && Number.isFinite(afterScore.score)) {
     memory.lastScore = afterScore.score;
   }
-  // Verify the exact offer; total balance is diagnostic only.
-  const confirmedKeys = await verifyActivityKeys(value.openedKeys || []);
-  const confirmedClick = confirmedKeys.length > 0;
+  // Points from a just-clicked card can lag the getuserinfo API by several
+  // seconds. If we clicked something but neither a processed tab nor a positive
+  // delta confirms it yet, wait longer and re-check once before deciding it was
+  // a miss (repeated misses get the card blocked for the rest of the session).
+  for (
+    let recheck = 0;
+    recheck < 2 &&
+    clickedItems.length > 0 &&
+    processedTabs === 0 &&
+    !(Number.isFinite(pointDelta) && pointDelta > 0);
+    recheck++
+  ) {
+    await delay(4000 + Math.random() * 2000, false);
+    const retryScore = await fetchRewardsSnapshot();
+    const retryDelta = getScoreDelta(beforeScore, retryScore);
+    if (Number.isFinite(retryDelta)) pointDelta = retryDelta;
+    if (retryScore && Number.isFinite(retryScore.score)) {
+      memory.lastScore = retryScore.score;
+    }
+  }
+  // Only a positive score delta confirms a click; a clicked-but-zero-delta card
+  // stays a retryable miss (so multi-step quizzes get another pass). The
+  // re-check above is what rescues the (often first) card whose points merely
+  // register slowly, without falsely confirming a tab that opened but earned 0.
+  const confirmedClick = Number.isFinite(pointDelta)
+    ? pointDelta > 0
+    : processedTabs > 0;
   let retryableMiss = false;
   if (confirmedClick) {
     confirmActivityKeys(
       memory,
       sessionVisited,
       sessionMisses,
-      confirmedKeys,
+      value.openedKeys || [],
     );
-  }
-  if ((value.openedKeys || []).some((key) => !confirmedKeys.includes(key)) && clickedItems.length > 0) {
+  } else if (clickedItems.length > 0) {
     const missed = markUnconfirmedActivityKeys(
-      (value.openedKeys || []).filter((key) => !confirmedKeys.includes(key)),
+      value.openedKeys || [],
       sessionVisited,
       sessionMisses,
       undefined,
@@ -4554,8 +4164,10 @@ async function runDashboardActivityPass(
     "update",
   );
 
+  await closeOpenedActivityTabs(tabId, existingTabIds);
+
   return {
-    clicked: confirmedKeys.length,
+    clicked: confirmedClick ? clickedItems.length : 0,
     attempted: clickedItems.length,
     nonExpandClicked: confirmedClick ? nonExpandClicks.length : 0,
     processed: confirmedClick ? processedTabs : 0,
@@ -4576,7 +4188,7 @@ async function runEarnActivityPass(
   // Same late-popup problem as Daily set: clear overlays before each scan so
   // the CDP press (and the synthetic fallback) hit the card, not a toast.
   await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
-  await delay(shortestDelay, true);
+  await delay(shortestDelay, false);
 
   const tabsBefore = await chrome.tabs.query({});
   const existingTabIds = new Set(tabsBefore.map((tab) => tab.id));
@@ -4609,33 +4221,20 @@ async function runEarnActivityPass(
       value.openedKeys?.[0],
       "KEEP EARNING",
     );
-    let pressed = false;
-    if (freshPoint) {
-      pressed = await dispatchTrustedPress(
+    if (!freshPoint) {
+      logs &&
+        log(
+          `[ACTIVITY] Pass ${pass} Keep-earning target became stale before click.`,
+          "warning",
+        );
+      clickedItems = [];
+    } else {
+      const pressed = await dispatchTrustedPress(
         tabId,
         freshPoint,
         "KEEP EARNING",
       );
-    }
-    if (!pressed) {
-      logs &&
-        log(
-          `[ACTIVITY] Pass ${pass} Keep-earning target point stale or press failed; fallback to direct DOM click.`,
-          "warning",
-        );
-      const fallbackResult = await race(
-        chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: createEarnActivityScript([...blockedKeys], 1, false),
-          returnByValue: true,
-        }),
-        mediumDelay,
-      ).catch(() => null);
-      const fallbackVal = fallbackResult?.result?.value;
-      if (fallbackVal?.clicked?.length) {
-        clickedItems = fallbackVal.clicked;
-      } else {
-        clickedItems = [];
-      }
+      if (!pressed) clickedItems = [];
     }
   }
   if (value.reason) {
@@ -4659,41 +4258,56 @@ async function runEarnActivityPass(
       );
   }
 
-  if (clickedItems.length > 0) {
-    await delay(4000 + Math.random() * 2500, true);
-  }
-  const processedTabs =
-    clickedItems.length > 0
-      ? await processOpenedActivityTabs(tabId, existingTabIds, earnUrl)
-      : 0;
+  await delay(4000 + Math.random() * 2500, false);
+  const processedTabs = await processOpenedActivityTabs(
+    tabId,
+    existingTabIds,
+    earnUrl,
+  );
   if (clickedItems.length > 0 || processedTabs > 0) {
     await chrome.tabs.update(tabId, { url: earnUrl, active: true });
     await wait(tabId);
-    await delay(mediumDelay, true);
+    await delay(mediumDelay, false);
   }
-  const afterScore =
-    clickedItems.length > 0 || processedTabs > 0
-      ? await fetchRewardsSnapshot()
-      : beforeScore;
-  const pointDelta = getScoreDelta(beforeScore, afterScore);
+  const afterScore = await fetchRewardsSnapshot();
+  let pointDelta = getScoreDelta(beforeScore, afterScore);
   if (afterScore && Number.isFinite(afterScore.score)) {
     memory.lastScore = afterScore.score;
   }
-  // Verify the exact offer; total balance is diagnostic only.
-  const confirmedKeys = await verifyActivityKeys(value.openedKeys || []);
-  const confirmedClick = confirmedKeys.length > 0;
+  // Same lag handling as the dashboard pass: re-check the score before
+  // concluding a clicked earn card did not score.
+  for (
+    let recheck = 0;
+    recheck < 2 &&
+    clickedItems.length > 0 &&
+    processedTabs === 0 &&
+    !(Number.isFinite(pointDelta) && pointDelta > 0);
+    recheck++
+  ) {
+    await delay(4000 + Math.random() * 2000, false);
+    const retryScore = await fetchRewardsSnapshot();
+    const retryDelta = getScoreDelta(beforeScore, retryScore);
+    if (Number.isFinite(retryDelta)) pointDelta = retryDelta;
+    if (retryScore && Number.isFinite(retryScore.score)) {
+      memory.lastScore = retryScore.score;
+    }
+  }
+  // Only a positive delta confirms; the re-check above gives lagging points
+  // time to land without falsely confirming a tab that opened but earned 0.
+  const confirmedClick = Number.isFinite(pointDelta)
+    ? pointDelta > 0
+    : processedTabs > 0;
   let retryableMiss = false;
   if (confirmedClick) {
     confirmActivityKeys(
       memory,
       sessionVisited,
       sessionMisses,
-      confirmedKeys,
+      value.openedKeys || [],
     );
-  }
-  if ((value.openedKeys || []).some((key) => !confirmedKeys.includes(key)) && clickedItems.length > 0) {
+  } else if (clickedItems.length > 0) {
     const missed = markUnconfirmedActivityKeys(
-      (value.openedKeys || []).filter((key) => !confirmedKeys.includes(key)),
+      value.openedKeys || [],
       sessionVisited,
       sessionMisses,
       undefined,
@@ -4728,8 +4342,10 @@ async function runEarnActivityPass(
     "update",
   );
 
+  await closeOpenedActivityTabs(tabId, existingTabIds);
+
   return {
-    clicked: confirmedKeys.length,
+    clicked: confirmedClick ? clickedItems.length : 0,
     attempted: clickedItems.length,
     processed: confirmedClick ? processedTabs : 0,
     skipped: skippedItems.length,
@@ -4788,11 +4404,10 @@ async function runClaimReadyPass(tabId, pass, allowStandaloneConfirm = false) {
   }
 
   let pointDelta = null;
-  let confirmed = false;
   if (clicked) {
     // Opening the card is only stage one; return quickly so the next pass can
     // click the dialog confirm. After the confirm, poll longer for API lag.
-    const checks = value.stage === "confirm" ? 2 : 1;
+    const checks = value.stage === "confirm" ? 4 : 1;
     for (let check = 0; check < checks; check++) {
       await delay(
         value.stage === "confirm"
@@ -4802,13 +4417,7 @@ async function runClaimReadyPass(tabId, pass, allowStandaloneConfirm = false) {
       );
       const afterScore = await fetchRewardsSnapshot();
       pointDelta = getScoreDelta(beforeScore, afterScore);
-      if (value.stage === "confirm") {
-        const probe = await race(chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
-          expression: createClaimReadyScript(true, false, true), returnByValue: true,
-        }), mediumDelay).catch(() => null);
-        confirmed = probe?.result?.value?.count === 0;
-        if (confirmed) break;
-      }
+      if (Number.isFinite(pointDelta) && pointDelta > 0) break;
     }
   }
   if (Number.isFinite(pointDelta) && pointDelta !== 0) {
@@ -4824,12 +4433,7 @@ async function runClaimReadyPass(tabId, pass, allowStandaloneConfirm = false) {
     "update",
   );
 
-  if (clicked && value.stage === "confirm") {
-    activityAttemptKeys.add("claim");
-    if (confirmed) activityConfirmedKeys.add("claim");
-  }
   return {
-    confirmed,
     clicked,
     retry,
     stage: value.stage || null,
@@ -4857,13 +4461,8 @@ async function activity(tabId, interruptible = true, options = {}) {
     return false;
   }
 
-  config.runtime.rsaTab = tabId;
   config.runtime.act = 1;
-  config.runtime.currentPhase = "activities";
-  startActivityDeadline(config.runtime);
-  markRuntimeAction("Đang quét nhiệm vụ Rewards", { retry: 0 });
   await set(config);
-  await saveRunCheckpoint();
   const shouldContinueActivity = () => isRuntimeActive();
   const activityStartTabs = new Set(
     (await chrome.tabs.query({})).map((tab) => tab.id),
@@ -4968,18 +4567,7 @@ async function activity(tabId, interruptible = true, options = {}) {
       if (debuggerReady) {
         // Wait for the Daily set section to actually render before the first
         // pass; a fixed post-load delay is regularly too short for the SPA.
-        const dailySetReady = await waitForRewardsSection(
-          tabId,
-          DAILY_SET_HEADING_PATTERN,
-        );
-        if (!dailySetReady) {
-          markRuntimeAction("Daily set chưa tải xong", {
-            outcome: RUN_OUTCOMES.UNCERTAIN,
-            outcomeReason: "daily_set_not_ready",
-          });
-          await set(config);
-          return false;
-        }
+        await waitForRewardsSection(tabId, DAILY_SET_HEADING_PATTERN);
       }
       // Promo/streak popups can appear late and cover the first card; close
       // twice with a gap instead of once.
@@ -5031,7 +4619,7 @@ async function activity(tabId, interruptible = true, options = {}) {
               chrome.debugger.sendCommand({ tabId }, "Page.bringToFront"),
               shortestDelay * 3,
             ).catch(() => null);
-            await delay(500, true);
+            await delay(500, false);
             const probe = await race(
               chrome.debugger.sendCommand({ tabId }, "Runtime.evaluate", {
                 expression: createDailySetStateProbe(),
@@ -5055,8 +4643,6 @@ async function activity(tabId, interruptible = true, options = {}) {
               pass,
             ),
           recover: async (attempt, state) => {
-            sessionVisited.clear();
-            sessionMisses.clear();
             log(
               "[ACTIVITY] Daily set recovery " +
                 attempt +
@@ -5070,13 +4656,7 @@ async function activity(tabId, interruptible = true, options = {}) {
             });
             await wait(tabId);
             if (!shouldContinueActivity()) return;
-            const recovered = await waitForRewardsSection(
-              tabId,
-              DAILY_SET_HEADING_PATTERN,
-            );
-            if (!recovered) {
-              throw new Error("Daily set did not become ready after recovery.");
-            }
+            await waitForRewardsSection(tabId, DAILY_SET_HEADING_PATTERN);
             await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
           },
           onPass: (passResult) => {
@@ -5086,34 +4666,27 @@ async function activity(tabId, interruptible = true, options = {}) {
               measuredDelta += passResult.pointDelta;
             if (
               passResult.clicked > 0 ||
-              passResult.processed > 0
+              passResult.processed > 0 ||
+              passResult.pointDelta > 0
             )
               meaningfulActivityRun = true;
             clicked = totalClicked > 0 || totalProcessed > 0;
           },
-          maxPasses: 12,
-          maxRecoveries: 2,
         });
         dailySetComplete = dailyResult.complete;
         if (!dailySetComplete) {
           log(
             "[ACTIVITY] Daily set NOT completed: " +
               JSON.stringify(dailyResult),
-            "warning",
+            "error",
           );
-          if (dailyResult.reason === "stopped") return false;
-          markRuntimeAction("Daily set còn nhiệm vụ cần làm thủ công", {
-            outcome: RUN_OUTCOMES.UNCERTAIN,
-            outcomeReason: "daily_set_manual_tasks",
-          });
-          await set(config);
-        } else {
-          log(
-            "[ACTIVITY] Daily set completion verified: " +
-              JSON.stringify(dailyResult.state),
-            "success",
-          );
+          return false;
         }
+        log(
+          "[ACTIVITY] Daily set completion verified: " +
+            JSON.stringify(dailyResult.state),
+          "success",
+        );
       } else {
         logs &&
           log(`[ACTIVITY] Skipping dashboard and earn passes.`, "warning");
@@ -5133,18 +4706,8 @@ async function activity(tabId, interruptible = true, options = {}) {
           active: true,
         });
         await wait(tabId);
-        const keepEarningReady = await waitForRewardsSection(
-          tabId,
-          KEEP_EARNING_HEADING_PATTERN,
-        );
-        if (!keepEarningReady) {
-          markRuntimeAction("Keep earning chưa tải xong", {
-            outcome: RUN_OUTCOMES.UNCERTAIN,
-            outcomeReason: "keep_earning_not_ready",
-          });
-          await set(config);
-          return false;
-        }
+        await delay(mediumDelay, interruptible);
+        await waitForRewardsSection(tabId, KEEP_EARNING_HEADING_PATTERN);
         await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
         await delay(shortestDelay, interruptible);
         await sendTabMessage(tabId, { action: "closePopups" }, "ACTIVITY");
@@ -5177,13 +4740,12 @@ async function activity(tabId, interruptible = true, options = {}) {
           }
           clicked = totalClicked > 0 || totalProcessed > 0;
 
-          if (passResult.retry) {
-            idlePasses = 0;
-          } else if (passResult.clicked === 0 && passResult.processed === 0) {
-            idlePasses++;
-          } else {
-            idlePasses = 0;
-          }
+          // A page can keep asking for a retry without rendering a usable
+          // control. Count those passes as idle so the earn loop remains bounded.
+          idlePasses =
+            passResult.clicked > 0 || passResult.processed > 0
+              ? 0
+              : idlePasses + 1;
           if (idlePasses >= 3) break;
         }
       } else if (!debuggerReady) {
@@ -5292,7 +4854,8 @@ async function activity(tabId, interruptible = true, options = {}) {
               claimNoControlPasses = 0;
             }
             if (
-              claimResult.confirmed
+              Number.isFinite(claimResult.pointDelta) &&
+              claimResult.pointDelta > 0
             ) {
               meaningfulActivityRun = true;
               clicked = true;
@@ -5300,7 +4863,7 @@ async function activity(tabId, interruptible = true, options = {}) {
             }
             // Stop immediately after a confirmed delta so a slow-closing dialog
             // cannot receive the same confirm press on the next pass.
-            if ((claimResult.clicked && claimResult.stage === "confirm") || shouldStopClaimPass(claimResult)) break;
+            if (shouldStopClaimPass(claimResult)) break;
             if (claimResult.retry) {
               await delay(shortestDelay, true);
               continue;
@@ -5333,7 +4896,7 @@ async function activity(tabId, interruptible = true, options = {}) {
         );
     } else if (!dailySetComplete) {
       log(
-        "[ACTIVITY] Daily set unresolved; leaving Rewards open for inspection.",
+        "[ACTIVITY] Daily set unresolved; ending this activity attempt.",
         "warning",
       );
     } else if (!clicked && !meaningfulActivityRun) {
@@ -5373,12 +4936,20 @@ async function activity(tabId, interruptible = true, options = {}) {
 // `notifyOnFinish` is set only by background triggers (alarms/startup): a user
 // who started the run from the open popup watches it live and needs no OS
 // notification.
+/**
+ * `force` runs the requested plan as-is, ignoring today's counters entirely:
+ * no trimming for a completed counter, and no stopping when the daily quota
+ * turns out to be full. It is set by the popup's Search button, where the user
+ * has explicitly asked for a run — a scheduled trigger must never set it, or a
+ * repeating alarm would re-run the whole plan every few minutes for the rest
+ * of the day.
+ */
 async function initialise(
   searches,
   expectedSessionId = null,
-  { notifyOnFinish = false, checkpoint = null } = {},
+  { notifyOnFinish = false, force = false } = {},
 ) {
-  if (expectedSessionId && !RunCoordinator.isActiveSession(expectedSessionId)) {
+  if (expectedSessionId && !isSessionStillActive(expectedSessionId)) {
     logs &&
       log(
         `[INITIALISE] - Session ${expectedSessionId} is no longer active. Aborting.`,
@@ -5388,40 +4959,25 @@ async function initialise(
   }
 
   const endedSessionType = config?.runtime?.currentSession?.type ?? null;
+  _bumpRunGeneration();
+  await resetRuntime(config);
+  ignoreDailyQuota = Boolean(force);
+  searches = normalizeSearchPlan(searches);
+  if (!force) {
+    searches = limitSearchPlanForToday(searches);
+  } else {
+    logs &&
+      log(
+        `[INITIALISE] Manual run: using the full plan (${searches.desk} desktop, ${searches.mob} mobile) regardless of today's counters.`,
+        "update",
+      );
+  }
+  const hasSearchPhase = searches.desk > 0 || searches.mob > 0;
+
   let tabId = null;
-  let rsaWindowId = null;
   let runSucceeded = false;
   let scheduleSucceeded = false;
   try {
-    if (!config.runtime.running || config.runtime.stopping) return false;
-    _bumpRunGeneration();
-    activityAttemptKeys.clear();
-    activityConfirmedKeys.clear();
-    await resetRuntime(config);
-    searches = normalizeSearchPlan(searches);
-    searches = limitSearchPlanForToday(searches);
-    const startedAt =
-      Number(config?.runtime?.currentSession?.startedAt) || Date.now();
-    const deadlines = checkpoint || createRunDeadlines({
-      searchCount: Number(searches.desk || 0) + Number(searches.mob || 0),
-      includeActivities: hasActivityWork(),
-      startedAt,
-    });
-    Object.assign(config.runtime, {
-      startedAt: deadlines.startedAt, deadlineAt: deadlines.deadlineAt,
-      searchDeadlineAt: deadlines.searchDeadlineAt, activityDeadlineAt: deadlines.activityDeadlineAt,
-    }, {
-      phaseProgress: { desk: { attempted: 0, finished: false }, mob: { attempted: 0, finished: false } },
-      requestedPlan: { desk: searches.desk, mob: searches.mob },
-      updatedAt: Date.now(),
-      lastAction: "Chuẩn bị phiên chạy",
-      retry: 0,
-    });
-    await set(config);
-    await saveRunCheckpoint(config.runtime.requestedPlan);
-    const hasSearchPhase = searches.desk > 0 || searches.mob > 0;
-
-    if (!config.runtime.running || config.runtime.stopping) return false;
     if (!navigator.onLine) {
       logs &&
         log(
@@ -5459,7 +5015,17 @@ async function initialise(
           attachFn: attach,
           detachFn: detach,
           clearFn: clear,
-          clickFn: click,
+          clickFn: async (...args) => {
+            if (ignoreDailyQuota) {
+              logs &&
+                log(
+                  "[POST_SEARCH] Forced run: skipping post-search login click.",
+                  "update",
+                );
+              return true;
+            }
+            return click(...args);
+          },
           waitFn: wait,
           delayFn: delay,
           createTabFn: (opts) => chrome.tabs.create(opts),
@@ -5488,51 +5054,14 @@ async function initialise(
     // Only prepare live topics when this run will actually perform searches.
     // Activity-only sessions should not contact external topic providers.
     resetSearchQueryHistory();
-    let rsaTab = null;
-
-    try {
-      if (typeof chrome.windows?.create === "function") {
-        const win = await chrome.windows.create({
-          url: bing,
-          focused: false,
-          width: 1024,
-          height: 768,
-          type: "normal",
-        });
-        if (win?.id) {
-          rsaWindowId = Number(win.id);
-          config.runtime.rsaWindowId = rsaWindowId;
-          if (win.tabs && win.tabs.length > 0) {
-            rsaTab = win.tabs[0];
-          } else {
-            const tabsInWin = await chrome.tabs.query({ windowId: rsaWindowId });
-            if (tabsInWin.length > 0) {
-              rsaTab = tabsInWin[0];
-            }
-          }
-        }
-      }
-    } catch (err) {
-      logs &&
-        log(
-          `[INITIALISE] Dedicated window creation failed (${err?.message}); falling back to new tab.`,
-          "warning",
-        );
-    }
-    if (!rsaTab) {
-      rsaTab = await chrome.tabs.create({ url: bing, active: false });
-    }
+    const rsaTab = await chrome.tabs.create({ url: bing, active: true });
     tabId = Number(rsaTab.id);
     config.runtime.rsaTab = tabId;
     config.runtime.total = searches.desk + searches.mob;
     await wait(tabId);
     await delay(shortestDelay, true);
 
-    logs &&
-      log(
-        `[INITIALISE] - Created new automation tab ${tabId}${rsaWindowId ? ` in dedicated window ${rsaWindowId}` : ""}`,
-        "update",
-      );
+    logs && log(`[INITIALISE] - Created new tab with ID: ${tabId}`, "update");
 
     await chrome.tabs.update(tabId, { autoDiscardable: false });
     await set(config);
@@ -5602,7 +5131,20 @@ async function initialise(
         attachFn: attach,
         detachFn: detach,
         clearFn: clear,
-        clickFn: click,
+        // Forced manual search must not end in a post-clear account-menu click
+        // ritual. The user asked for searches; login recovery is only needed
+        // after the mobile cookie wipe (handled inside the search phase).
+        clickFn: async (...args) => {
+          if (ignoreDailyQuota) {
+            logs &&
+              log(
+                "[POST_SEARCH] Forced run: skipping post-search login click.",
+                "update",
+              );
+            return true;
+          }
+          return click(...args);
+        },
         waitFn: wait,
         delayFn: delay,
         createTabFn: (opts) => chrome.tabs.create(opts),
@@ -5626,37 +5168,20 @@ async function initialise(
       postSearchResult?.searchSuccessful ?? postSearchResult?.runSuccessful,
     );
   } catch (err) {
-    if (isTabGoneError(err)) {
-      // The automation tab may be closed by the user or discarded by Chrome
-      // between awaited tab operations. End this run cleanly; cleanup below
-      // still clears its session state and badge.
-      logs &&
-        log(
-          `[INITIALISE] - Automation tab ${tabId || "(unknown)"} was closed; ending run.`,
-          "warning",
-        );
-    } else {
-      logs && log(`[INITIALISE] - Unexpected error: ${err.message}`, "error");
-      recordCrash("initialise", err, {
-        expectedSessionId,
-        phase: config?.runtime?.currentPhase,
-      });
-    }
+    logs && log(`[INITIALISE] - Unexpected error: ${err.message}`, "error");
+    recordCrash("initialise", err, {
+      expectedSessionId,
+      phase: config?.runtime?.currentPhase,
+    });
   } finally {
     needPatch = false;
-    await userStopTask;
-    try {
-      await recordRunReport(runSucceeded, runSucceeded ? null : "run_incomplete");
-    } catch (error) { recordCrash("run_report", error); }
-    await clearRunCheckpoint().catch((error) => recordCrash("checkpoint_clear", error));
-    if (rsaWindowId) {
-      await chrome.windows.remove(rsaWindowId).catch(() => {});
-      config.runtime.rsaWindowId = null;
-    }
+    // Scoped to this run only: a scheduled run starting later must go back to
+    // respecting today's counters.
+    ignoreDailyQuota = false;
     await cleanupAfterRun(tabId, expectedSessionId, {
       removeTabFn: (id) => chrome.tabs.remove(id),
       stopCurrentSession:
-        (reason) => RunCoordinator.stopCurrentSession(reason, expectedSessionId),
+        RunCoordinator.stopCurrentSession.bind(RunCoordinator),
       setConfig: set,
       createAlarm: (name, opts) => chrome.alarms.create(name, opts),
       log: (msg, level) => logs && log(msg, level),
@@ -5669,40 +5194,9 @@ async function initialise(
       isScheduledModeActive: () => isScheduledModeActive(),
       notifyFn: notifyOnFinish ? notifyScheduledRunFinished : undefined,
     });
-
   }
 
   return runSucceeded;
-}
-
-async function resumeRecentCheckpoint() {
-  const checkpoint = await readValidRunCheckpoint();
-  if (!checkpoint) return false;
-  const session = RunCoordinator.startNewSession("resume");
-  if (!session) return false;
-  try {
-    const refreshed = await refreshSearchCountersFromRewards();
-    if (!config.runtime.running || !refreshed ||
-        !validateRunCheckpoint(checkpoint, { accountKey: rewardsAccountKey }).valid) {
-      await clearRunCheckpoint();
-      return false;
-    }
-    const remaining = limitSearchPlanForToday(getCheckpointRemainingPlan(checkpoint));
-    if (!hasSearchWork(remaining) && !hasActivityWork()) {
-      await clearRunCheckpoint();
-      return false;
-    }
-    const plan = normalizeSearchPlan({ ...config.search, ...remaining });
-    markRuntimeAction("Khôi phục phiên bị gián đoạn", { outcome: null, outcomeReason: null });
-    await set(config);
-    await initialise(plan, session.id, { checkpoint });
-    return true;
-  } finally {
-    await userStopTask;
-    if (RunCoordinator.isActiveSession(session.id)) {
-      await RunCoordinator.stopCurrentSession("resume_preflight_finished", session.id);
-    }
-  }
 }
 
 chrome.alarms.onAlarm.addListener(async (alarm) => {
@@ -5710,9 +5204,7 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
     const stored = await get();
     await applyStoredConfig(stored, "alarm");
     logs && log(`[ALARM] - Alarm triggered.`, "update");
-    if (alarm.name === "resume_checkpoint") {
-      await resumeRecentCheckpoint();
-    } else if (alarm.name === "schedule") {
+    if (alarm.name === "schedule") {
       if (isScheduledModeActive()) {
         await tryStartScheduledRun("ALARM");
       } else {
@@ -5774,9 +5266,14 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(async () => {
+chrome.runtime.onInstalled.addListener(async (details) => {
   await configReady;
   await bootstrapConfig();
+  if (!shouldShowDonateOnInstall(details?.reason)) return;
+  await chrome.tabs.create({
+    url: chrome.runtime.getURL(DONATE_PAGE),
+    active: true,
+  });
 });
 chrome.runtime.onStartup.addListener(async () => {
   try {
@@ -5854,28 +5351,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         await set(config);
 
-        // Refresh before planning so a manual run only performs today's
-        // remaining quota. Safe after claiming the session: this run owns the
-        // coordinator slot while the network request is in flight.
+        // Counters are refreshed for the popup's display only. A manual start
+        // runs the plan the user asked for even when today's counters are
+        // already complete — being told "nothing remaining" after pressing
+        // Search is not a useful answer to an explicit request. Safe to do
+        // after claiming the session: the run is already ours.
         await refreshSearchCountersFromRewards();
 
-        const remainingPlan = limitSearchPlanForToday(config.search);
-        if (!hasSearchWork(remainingPlan) && !hasActivityWork()) {
-          await RunCoordinator.stopCurrentSession("nothing_remaining");
-          reply({
-            success: true,
-            message: "Hôm nay không còn lượt tìm kiếm hoặc nhiệm vụ cần làm.",
-          });
-          return;
-        }
-
-        const startLabel = hasSearchWork(remainingPlan)
-          ? `${remainingPlan.desk} desktop and ${remainingPlan.mob} mobile`
+        const startLabel = hasSearchWork(config.search)
+          ? `${config.search.desk} desktop and ${config.search.mob} mobile`
           : "activities only";
         log(`Starting searches: ${startLabel}. (session: ${searchSession.id})`);
         reply({ success: true, message: "Starting searches." });
 
-        await initialise(remainingPlan, searchSession.id);
+        await initialise(config?.search, searchSession.id, { force: true });
         break;
       }
 
@@ -5987,29 +5476,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         break;
       }
 
-      case ACTIONS.REFRESH_QUOTA: {
-        const success = await refreshSearchCountersFromRewards();
-        reply({ success, message: success ? "Đã cập nhật quota." : "Chưa đọc được quota. Kiểm tra đăng nhập Rewards." });
-        break;
-      }
-
       case ACTIONS.STOP:
         log("Stopping searches or activities.");
+        await handleUserStop();
         reply({
           success: true,
           message: "Stopping searches or activities.",
         });
-        // Acknowledge immediately so the popup reacts in under one second.
-        // Cleanup remains serialized in the worker and every interruptible wait
-        // observes the coordinator state within 100 ms.
-        if (!config.runtime.currentSession) return;
-        markRuntimeAction("Đang dừng và dọn dẹp", { stopping: 1 });
-        RunCoordinator.requestStop();
-        userStopTask ||= handleUserStop().catch((error) => {
-          recordCrash("user_stop_cleanup", error);
-          logs && log(`[STOP] Cleanup failed: ${error.message}`, "error");
-        }).finally(() => { userStopTask = null; });
-        return;
+        break;
 
       case ACTIONS.CLEAR_BROWSING_DATA: {
         log("Clearing Bing browsing data.");
@@ -6058,7 +5532,34 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
           message: "Starting activity.",
         });
 
-        await initialise({ ...config.search, desk: 0, mob: 0 }, activitySession.id);
+        let activityTab = null;
+        try {
+          activityTab = await chrome.tabs.create({
+            url: rewards + "dashboard",
+            active: true,
+          });
+          await wait(activityTab.id);
+          await activity(activityTab.id, true, {
+            recordRun: false,
+          });
+        } finally {
+          if (activityTab?.id) {
+            try {
+              await chrome.tabs.remove(activityTab.id);
+            } catch (error) {
+              logs &&
+                log(
+                  `[MESSAGE] Failed to close activity tab: ${error.message}`,
+                  "warning",
+                );
+            }
+          }
+          if (RunCoordinator.isActiveSession(activitySession.id)) {
+            await RunCoordinator.stopCurrentSession("activity_finish");
+          } else {
+            await set(config);
+          }
+        }
         break;
       }
 

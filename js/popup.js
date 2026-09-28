@@ -1,4 +1,3 @@
-import { createQuotaView } from "/js/search-quota.js";
 import "/js/jquery.js";
 import { log, get, atomicUpdate, applyConfigDefaults } from "/js/utils.js";
 import { devices } from "/js/devices.js";
@@ -6,7 +5,6 @@ import { createDefaultConfig } from "/js/config-defaults.js";
 import { ACTIONS, MESSAGE_TIMEOUT_MS } from "/js/messages.js";
 import { exportCrashLogText, clearCrashLog } from "/js/crash-logger.js";
 import { ACTIVITY_ISSUE_KEY } from "/js/activity-access.js";
-import { createPopupRunViewModel } from "/js/popup-view-model.js";
 
 /**
  * Send a message to the service worker but never hang forever if the worker is
@@ -41,6 +39,10 @@ let config = createDefaultConfig();
 let _uiUpdateTimer = null;
 let _uiLocked = false;
 let _toastTimer = null;
+// Tracks whether we've already auto-revealed the Schedule panel for the current
+// run, so progress-driven re-renders don't fight a user who manually collapsed
+// it. Reset once the run ends.
+let _scheduleAutoRevealed = false;
 
 // How long a destructive button stays "armed" after the first click before it
 // reverts to its idle label. A second click within this window performs the
@@ -104,6 +106,18 @@ function withConfirm(runHandler, confirmText = "Chắc chắn?") {
   };
 }
 
+// Vietnamese labels for runtime.currentPhase (see service.js/search-phases.js).
+// Unknown/empty phases fall back to the bare progress count in updateUI().
+const PHASE_LABELS = {
+  search: "Đang tìm trên máy tính…",
+  mobile_pre_clear: "Đang dọn dữ liệu cho điện thoại…",
+  mobile_simulation: "Đang giả lập điện thoại…",
+  mobile_search: "Đang tìm trên điện thoại…",
+  post_mobile: "Đang khôi phục đăng nhập…",
+  post_search: "Đang dọn dẹp sau tìm kiếm…",
+  activities: "Đang làm nhiệm vụ…",
+};
+
 // ── Tunables (were magic numbers scattered through the file) ──
 const UI_UPDATE_DEBOUNCE_MS = 80;
 const STATUS_FLASH_MS = 1000;
@@ -130,28 +144,37 @@ const limitsMap = {
   searchMob: { min: 0, max: 300 },
   searchMin: { min: 5, max: 600 },
   searchMax: { min: 8, max: 900 },
+  scheduleDesk: { min: 0, max: 300 },
+  scheduleMob: { min: 0, max: 300 },
+  scheduleMin: { min: 5, max: 600 },
+  scheduleMax: { min: 8, max: 900 },
 };
 const $searchDesk = $("#searchDesk");
 const $searchMob = $("#searchMob");
 const $searchMin = $("#searchMin");
 const $searchMax = $("#searchMax");
 const $searchMode = $("#searchMode");
-const $searchModeA = $("#searchMode button");
+const $searchModeA = $("#searchMode a");
 const $searchTrigger = $("#searchTrigger");
+const $scheduleDesk = $("#scheduleDesk");
+const $scheduleMob = $("#scheduleMob");
+const $scheduleMin = $("#scheduleMin");
+const $scheduleMax = $("#scheduleMax");
 const $scheduleMode = $("#scheduleMode");
-const $scheduleModeA = $("#scheduleMode button");
+const $scheduleModeA = $("#scheduleMode a");
 const $scheduleTrigger = $("#scheduleTrigger");
 const $scheduleTime = $("#scheduleTime");
 const $scheduleTimeRow = $("#scheduleTimeRow");
 const $scheduleTimeHint = $("#scheduleTimeHint");
-const $scheduleSummary = $("#scheduleSummary");
-const $planSummary = $("#planSummary");
+const $version = $("#version");
+const $userManual = $("#userManual");
 const $deviceName = $("#deviceName");
 const $resetDevice = $("#resetDevice");
 const $clear = $("#clear");
 const $preserveRewards = $("#preserveRewards");
 const $log = $("#log");
 const $niche = $("#niche");
+const $activity = $("#activity");
 const $act = $("#act");
 const $clearBrowsingData = $("#clearBrowsingData");
 const $simulate = $("#simulate");
@@ -162,26 +185,17 @@ const $clearCrashLog = $("#clearCrashLog");
 const $runtime = $("#runtime");
 const $reset = $("#reset");
 const $progressBar = $(".progressBar");
-const $progress = $(".progress");
+const $progress = $(".progress:not(.act)");
 const $failed = $(".failed");
 function compare() {
-  const logs = config?.control?.log;
   const desk = Number($searchDesk.val());
   const mob = Number($searchMob.val());
   $searchModeA.removeClass("active");
-  let matchedMode = null;
   for (const [id, val] of Object.entries(SEARCH_MODE_PRESETS)) {
     if (desk === val.desk && mob === val.mob) {
-      $searchMode.find(`button.${id}`).addClass("active");
-      logs && log(`[COMPARE] - Search mode set to: ${id}`, "update");
-      config.search.mode = id;
-      matchedMode = id;
+      $searchMode.find(`a.${id}`).addClass("active");
       break;
     }
-  }
-  if (!matchedMode) {
-    config.search.mode = "custom";
-    logs && log(`[COMPARE] - Search mode set to custom values.`, "update");
   }
 }
 async function saveConfigMutation(mutator) {
@@ -229,29 +243,6 @@ async function resetDevice() {
     return false;
   }
 }
-function renderLiveStatus() {
-  const runView = createPopupRunViewModel(config);
-  $("#runCard").prop("hidden", !runView.running);
-  $("#runTitle").text(runView.title);
-  $("#runDetail").text(runView.detail);
-  $("#runMeta").text(runView.meta);
-  $("#lastReport").prop("hidden", runView.running || !runView.report);
-  $("#lastReportTitle")
-    .text(runView.report?.title || "")
-    .attr("data-outcome", runView.report?.outcome || "");
-  $("#lastReportDetail").text(runView.report?.detail || "");
-
-  const quota = createQuotaView(config);
-  for (const [index, id] of [[0, "Desk"], [1, "Mob"]]) {
-    $(`#quota${id}`).text(quota.rows[index].points);
-    $(`#quota${id}Detail`).text(quota.rows[index].detail);
-  }
-  $("#quotaUpdated").text(quota.meta);
-  $("#quotaEstimate").text(quota.estimate);
-}
-const liveStatusTimer = setInterval(renderLiveStatus, 1000);
-window.addEventListener("pagehide", () => clearInterval(liveStatusTimer), { once: true });
-
 async function updateUI() {
   const issueData = await chrome.storage.local.get(ACTIVITY_ISSUE_KEY);
   const issue = issueData[ACTIVITY_ISSUE_KEY];
@@ -271,9 +262,10 @@ async function updateUI() {
   $searchMin.val(config.search.min);
   $searchMax.val(config.search.max);
   compare();
-  $planSummary.text(
-    `${config.search.desk} máy tính · ${config.search.mob} điện thoại`,
-  );
+  $scheduleDesk.val(config.schedule.desk);
+  $scheduleMob.val(config.schedule.mob);
+  $scheduleMin.val(config.schedule.min);
+  $scheduleMax.val(config.schedule.max);
   $scheduleModeA.removeClass("active");
   $scheduleMode.find(`.${config.schedule.mode}`).addClass("active");
   // The daily-time row only matters in m5 mode.
@@ -304,20 +296,13 @@ async function updateUI() {
       // chrome.alarms unavailable (e.g. test env) — keep the static hint.
     }
   }
-  const scheduleLabels = {
-    m1: "Thủ công",
-    m2: "Khi mở trình duyệt",
-    m3: "Mỗi ~5 phút",
-    m4: "Mỗi ~15 phút",
-    m5: `Hằng ngày ${config?.schedule?.time || "08:00"}`,
-  };
-  $scheduleSummary.text(scheduleLabels[config?.schedule?.mode] || "Thủ công");
   if (config?.runtime?.running) {
-    $searchTrigger.text("Dừng ngay").addClass("stopping");
+    $searchTrigger.text("Dừng").addClass("stopping");
+    $scheduleTrigger.text("Dừng").addClass("stopping");
   } else {
-    $searchTrigger.text("Làm phần còn thiếu").removeClass("stopping");
+    $searchTrigger.text("Làm nhiệm vụ").removeClass("stopping");
+    $scheduleTrigger.text("Đặt lịch").removeClass("stopping");
   }
-  $scheduleTrigger.text("Đặt lịch").removeClass("stopping");
   const { total, done, failed } = config.runtime;
   const totalCount = Number(total) || 0;
   const doneCount = Number(done) || 0;
@@ -362,18 +347,44 @@ async function updateUI() {
   }
   $niche.val(resolvedNiche);
   $act.prop("checked", config?.control?.act ? true : false);
-  const isRunning = !!(config?.runtime?.running || config?.runtime?.stopping || config?.runtime?.currentSession);
+  if (config.runtime.act) {
+    $("#activity ~ .progressBar > .progress").addClass("running");
+  } else {
+    $("#activity ~ .progressBar > .progress").removeClass("running");
+  }
 
-  renderLiveStatus();
+  const isRunning = !!config?.runtime?.running;
 
-  $searchTrigger.prop("disabled", !!config?.runtime?.stopping);
-  if (config?.runtime?.stopping) $searchTrigger.text("Đang dọn dẹp…");
-  $scheduleTrigger.prop("disabled", isRunning);
+  // Visible progress line — the same numbers that used to hide inside the
+  // progress-bar tooltip (only readable on hover of a 4px strip).
+  const $runStatus = $("#runStatus");
+  // Human-readable label for the current runtime phase so the status line says
+  // WHAT the run is doing ("Đang giả lập điện thoại…"), not just a bare count —
+  // this is what makes a long mobile/activity phase not feel frozen.
+  const phaseLabel = PHASE_LABELS[config?.runtime?.currentPhase] || "";
+  if (totalCount > 0) {
+    const performed = doneCount + failedCount;
+    const failText = failedCount
+      ? ` · <span class="err">${failedCount} lỗi</span>`
+      : "";
+    const phaseText = phaseLabel ? `${phaseLabel} · ` : "";
+    $runStatus.html(`${phaseText}Đã làm ${performed}/${totalCount}${failText}`);
+  } else if (isRunning) {
+    $runStatus.text(phaseLabel || "Đang khởi động…");
+  } else {
+    $runStatus.text("");
+  }
+
+  $("#searchTrigger, #scheduleTrigger").prop("disabled", false);
   const configInputIds = [
     "#searchDesk",
     "#searchMob",
     "#searchMin",
     "#searchMax",
+    "#scheduleDesk",
+    "#scheduleMob",
+    "#scheduleMin",
+    "#scheduleMax",
     "#scheduleTime",
   ];
 
@@ -381,13 +392,11 @@ async function updateUI() {
     $(id).prop("disabled", isRunning);
   });
 
-  $("#searchMode button, #scheduleMode button")
-    .prop("disabled", isRunning)
-    .toggleClass("disabled", isRunning);
+  $("#searchMode a, #scheduleMode a").toggleClass("disabled", isRunning);
 
   // Disable maintenance actions that would corrupt or collide with an active
   // run (start another activity/simulation, or wipe cookies mid-run).
-  $("#simulate, #clearBrowsingData").prop("disabled", isRunning);
+  $("#activity, #simulate, #clearBrowsingData").prop("disabled", isRunning);
 
   logs && log(`[UPDATE] - UI updated`, "update");
 
@@ -404,6 +413,20 @@ async function updateUI() {
     $badge.hide();
   }
 
+  // Schedule is its own collapsible section now; when a schedule run becomes
+  // active, reveal it ONCE so its trigger ("Dừng") and progress are visible.
+  // Guarded by a flag so progress-driven re-renders don't re-open a panel the
+  // user deliberately collapsed mid-run. The flag resets when the run ends.
+  if (isRunning && config?.runtime?.mode === "schedule") {
+    if (!_scheduleAutoRevealed) {
+      $("#schedule").prop("hidden", false);
+      $("#schedToggle").attr("aria-expanded", "true");
+      _scheduleAutoRevealed = true;
+      logs && log(`[NAV] - Schedule running; Schedule panel opened.`);
+    }
+  } else {
+    _scheduleAutoRevealed = false;
+  }
 }
 async function flashStatus($btn, originalText, result, successMsg) {
   // Remember the button's original tooltip so we can restore it after the flash
@@ -435,7 +458,7 @@ async function flashStatus($btn, originalText, result, successMsg) {
 }
 async function stopActiveRunIfNeeded() {
   const stored = await get();
-  if (!stored?.runtime?.running && !stored?.runtime?.stopping && !stored?.runtime?.currentSession) return true;
+  if (!stored?.runtime?.running) return true;
   // The worker may be asleep; if the stop message is lost we still poll storage
   // below, so swallow send errors rather than aborting the reset flow.
   try {
@@ -447,7 +470,7 @@ async function stopActiveRunIfNeeded() {
   const deadline = Date.now() + STOP_WAIT_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const current = await get();
-    if (!current?.runtime?.running && !current?.runtime?.stopping && !current?.runtime?.currentSession) return true;
+    if (!current?.runtime?.running) return true;
     await new Promise((resolve) => setTimeout(resolve, STOP_WAIT_POLL_MS));
   }
   return false;
@@ -545,15 +568,6 @@ async function persistSearchForm() {
         ...next.search,
         ...search,
       };
-      // Scheduled runs use this same plan. Keep the persisted schedule payload
-      // synchronized so an already-armed alarm never runs stale counts.
-      next.schedule = {
-        ...next.schedule,
-        desk: search.desk,
-        mob: search.mob,
-        min: search.min,
-        max: search.max,
-      };
     });
     return { ...config.search };
   } catch (err) {
@@ -567,13 +581,14 @@ async function persistSearchForm() {
 }
 async function persistScheduleForm() {
   try {
-    const plan = await persistSearchForm();
+    const min = readLimitedNumber($scheduleMin, "scheduleMin");
+    const max = Math.max(min, readLimitedNumber($scheduleMax, "scheduleMax"));
     const schedule = {
       ...(config.schedule || {}),
-      desk: plan.desk,
-      mob: plan.mob,
-      min: plan.min,
-      max: plan.max,
+      desk: readLimitedNumber($scheduleDesk, "scheduleDesk"),
+      mob: readLimitedNumber($scheduleMob, "scheduleMob"),
+      min,
+      max,
       // "HH:MM" from the <input type=time>; service normalizes invalid values.
       time: $scheduleTime.val() || config?.schedule?.time || "08:00",
     };
@@ -594,6 +609,15 @@ async function persistScheduleForm() {
   }
 }
 $(document).ready(async function () {
+  $version.val(chrome.runtime.getManifest().version);
+  $userManual.on("click", () => {
+    chrome.tabs.create({
+      // Was a PDF that never shipped with the extension (dead link); now an
+      // in-extension HTML manual.
+      url: "/manual.html",
+    });
+  });
+
   // Derive a UI scale from the display, but clamp it: an unclamped value blows
   // the popup up to ~2x on 4K screens and shrinks it on small laptops, so the
   // popup size was effectively random per-monitor.
@@ -627,20 +651,38 @@ $(document).ready(async function () {
     $scheduleSection.prop("hidden", isOpen);
     $schedToggle.attr("aria-expanded", String(!isOpen));
   });
+  // The mode presets and reset-device control are <a role="button"> elements
+  // (no href), so they aren't keyboard-operable by default. Mirror native
+  // button behaviour: Enter/Space activates them.
+  $(document).on("keydown", 'a[role="button"]', function (e) {
+    if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") {
+      e.preventDefault();
+      // `.disabled` presets block the mouse via `pointer-events: none`, but a
+      // programmatic click() bypasses that — guard here so a keyboard user
+      // can't mutate search/schedule counts mid-run.
+      if (this.classList.contains("disabled")) return;
+      this.click();
+    }
+  });
+  // If a schedule run is already active on load, reveal the Schedule section so
+  // its controls and progress are visible.
+  if (config?.runtime?.running && config?.runtime?.mode === "schedule") {
+    $scheduleSection.prop("hidden", false);
+    $schedToggle.attr("aria-expanded", "true");
+  }
+
   const logs = config?.control?.log;
   logs && log("[INIT] - UI initialized with scale: " + scale, "update");
   $searchDesk.on("change", async function () {
     const desk = readLimitedNumber($(this), "searchDesk");
     await saveConfigMutation((next) => {
       next.search.desk = desk;
-      next.schedule.desk = desk;
     });
   });
   $searchMob.on("change", async function () {
     const mob = readLimitedNumber($(this), "searchMob");
     await saveConfigMutation((next) => {
       next.search.mob = mob;
-      next.schedule.mob = mob;
     });
   });
   $searchMin.on("change", async function () {
@@ -653,7 +695,6 @@ $(document).ready(async function () {
     }
     await saveConfigMutation((next) => {
       Object.assign(next.search, patch);
-      Object.assign(next.schedule, patch);
     });
   });
   $searchMax.on("change", async function () {
@@ -666,7 +707,6 @@ $(document).ready(async function () {
     }
     await saveConfigMutation((next) => {
       Object.assign(next.search, patch);
-      Object.assign(next.schedule, patch);
     });
   });
   $searchModeA.on("click", async function () {
@@ -682,11 +722,45 @@ $(document).ready(async function () {
       await saveConfigMutation((next) => {
         next.search.desk = preset.desk;
         next.search.mob = preset.mob;
-        next.schedule.desk = preset.desk;
-        next.schedule.mob = preset.mob;
       });
       compare();
     }
+  });
+  $scheduleDesk.on("change", async function () {
+    const desk = readLimitedNumber($(this), "scheduleDesk");
+    await saveConfigMutation((next) => {
+      next.schedule.desk = desk;
+    });
+  });
+  $scheduleMob.on("change", async function () {
+    const mob = readLimitedNumber($(this), "scheduleMob");
+    await saveConfigMutation((next) => {
+      next.schedule.mob = mob;
+    });
+  });
+  $scheduleMin.on("change", async function () {
+    let val = readLimitedNumber($(this), "scheduleMin");
+    let range = Number($scheduleMax.val());
+    const patch = { min: val };
+    if (range < val * 1.5) {
+      range = clampLimitedNumber(Math.ceil(val * 1.5), "scheduleMax");
+      patch.max = range;
+    }
+    await saveConfigMutation((next) => {
+      Object.assign(next.schedule, patch);
+    });
+  });
+  $scheduleMax.on("change", async function () {
+    let val = readLimitedNumber($(this), "scheduleMax");
+    let range = Number($scheduleMin.val());
+    const patch = { max: val };
+    if (val < range * 1.5) {
+      range = clampLimitedNumber(Math.floor(val / 1.5), "scheduleMin");
+      patch.min = range;
+    }
+    await saveConfigMutation((next) => {
+      Object.assign(next.schedule, patch);
+    });
   });
   $scheduleTime.on("change", async function () {
     const time = $(this).val() || "08:00";
@@ -799,24 +873,6 @@ $(document).ready(async function () {
       }
     };
   }
-  $("#refreshQuota").on("click", async function () {
-    $(this).prop("disabled", true);
-    try {
-      const result = await sendMessageWithTimeout({ action: ACTIONS.REFRESH_QUOTA });
-      showToast(result?.message, result?.success ? "success" : "error");
-      await updateUI();
-    } catch { showToast("Không cập nhật được quota.", "error"); }
-    finally { $(this).prop("disabled", false); }
-  });
-  $("#activitiesOnly").on("click", async () => {
-    if (config.runtime.currentSession) return;
-    await saveConfigMutation((next) => {
-      next.search.desk = 0; next.search.mob = 0; next.control.act = 1;
-      next.schedule.desk = 0; next.schedule.mob = 0;
-    });
-    await updateUI();
-    showToast("Đã chọn chỉ nhiệm vụ. Bấm Làm phần còn thiếu để chạy.");
-  });
   $searchTrigger.on(
     "click",
     makeRunTriggerHandler({
@@ -880,6 +936,23 @@ $(document).ready(async function () {
     });
     logs && log(`[CONTROL] - Niche set to: ${config.control.niche}`, "update");
   });
+  $activity.on(
+    "click",
+    makeActionHandler(
+      async ($btn, $btnText) => {
+        const response = await sendMessageWithTimeout({
+          action: ACTIONS.ACTIVITY,
+        });
+        await flashStatus($btn, $btnText, response);
+        logs &&
+          log(
+            `[ACTIVITY] - Activity started: ${response?.message ?? JSON.stringify(response)}`,
+            "update",
+          );
+      },
+      { locked: true },
+    ),
+  );
   $act.on("change", async function () {
     const act = $(this).is(":checked") ? 1 : 0;
     await saveConfigMutation((next) => {

@@ -2,13 +2,12 @@
 // (MV3 content scripts are classic scripts and cannot `import`; action names
 // mirror js/messages.js CONTENT_ACTIONS and must stay in sync.)
 const SELECTORS = {
-  mobileHamburger: "#mHamburger, #dots_overflow_menu_container, [aria-label*='menu' i]",
+  mobileHamburger: "#mHamburger",
   mobileMenu: "#HBContent",
   mobileSignInLink:
     "#HBSignIn a[role='menuitem']:not([style*='display: none'])",
-  desktopSignIn:
-    "#id_s, #id_l, a.id_button#id_l, a.id_button, #b_idProviders, #id_rh_w, .b_clickarea",
-  desktopMenu: "#rewid-f, #id_d, .id_popup",
+  desktopSignIn: ".b_clickarea",
+  desktopMenu: "#rewid-f",
   searchInput: "#sb_form_q",
   searchSubmitById: "#sb_form_go",
   searchSubmitByClass: ".b_searchboxSubmit",
@@ -65,20 +64,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
               sendResponse({ success: true, loggedIn: Boolean(isLoggedIn) });
             }
           } else {
-            const signInBtn = document.querySelector("#id_s, a[href*='signin'], #b_idProviders");
-            const accountBtn = document.querySelector(SELECTORS.desktopSignIn);
+            const click = document.querySelector(SELECTORS.desktopSignIn);
             const desktopMenu = document.querySelector(SELECTORS.desktopMenu);
-            if (signInBtn) {
-              safeClick(signInBtn);
-              console.log("Clicked desktop sign in button");
-              sendResponse({ success: true, signInInitiated: true });
-            } else if (accountBtn && !desktopMenu) {
-              safeClick(accountBtn);
-              console.log("Clicked desktop account / rewards button");
-              sendResponse({ success: true });
-            } else {
-              sendResponse({ success: true, loggedIn: true });
+            if (click && !desktopMenu) {
+              click.click();
             }
+            sendResponse({ success: true });
           }
           break;
         }

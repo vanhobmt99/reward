@@ -1,8 +1,3 @@
-import {
-  isRewardsSearchCounterComplete,
-  getRewardsSearchCounterDone,
-} from "./rewards-metrics.js";
-
 function log(message, type = "default") {
   const colorMap = {
     default: "#555555",
@@ -235,32 +230,6 @@ function applyConfigDefaults(target, stored) {
   }
 
   target.control = target.control || {};
-  target.runtime = target.runtime || {};
-  target.runtime.schemaVersion = 2;
-  target.runReports = (Array.isArray(target.runReports)
-    ? target.runReports
-    : []
-  )
-    .slice(0, 7)
-    .map((report) => ({
-      version: 1,
-      startedAt: Number(report?.startedAt) || null,
-      finishedAt: Number(report?.finishedAt) || null,
-      durationMs: Math.max(0, Number(report?.durationMs) || 0),
-      mode: report?.mode ? String(report.mode) : null,
-      total: Math.max(0, Number(report?.total) || 0),
-      done: Math.max(0, Number(report?.done) || 0),
-      failed: Math.max(0, Number(report?.failed) || 0),
-      tasks: { completed: Math.max(0, Number(report?.tasks?.completed) || 0), uncertain: Math.max(0, Number(report?.tasks?.uncertain) || 0) },
-      result: {
-        outcome: String(report?.result?.outcome || "uncertain"),
-        item: String(report?.result?.item || "run"),
-        reason: report?.result?.reason
-          ? String(report.result.reason)
-          : null,
-        at: Number(report?.result?.at) || null,
-      },
-    }));
   delete target.control.consent;
   delete target.pro;
   if (!storedPatchDefaultApplied) {
@@ -313,6 +282,55 @@ function applyConfigDefaults(target, stored) {
   return target;
 }
 
+function readRewardsCounterAttr(item, key) {
+  if (item == null) return 0;
+  const attr = item.attributes || item;
+  const value = Number(attr[key] ?? item[key] ?? 0);
+  return Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Pick the counter entry that describes today's earning state.
+ *
+ * Bing returns `counters.pcSearch` / `counters.mobileSearch` as an array with
+ * one entry per point tier, in no guaranteed order. Reading `counterArray[0]`
+ * blindly can land on a tier that is already complete while the live tier still
+ * has room — which marks the whole daily counter "done" and makes the run skip
+ * searching entirely.
+ *
+ * Same rule as `pickActiveCounter` in js/rewards-metrics.js. Duplicated rather
+ * than imported because js/utils.js is evaluated by the test sandbox, which
+ * does not resolve `import` statements.
+ */
+function pickActiveRewardsCounter(counterArray) {
+  if (!Array.isArray(counterArray)) return null;
+  const items = counterArray.filter((item) => item != null);
+  if (items.length === 0) return null;
+  const active = items.find(
+    (item) =>
+      readRewardsCounterAttr(item, "max") >
+      readRewardsCounterAttr(item, "progress"),
+  );
+  return active || items[items.length - 1];
+}
+
+function isRewardsSearchCounterComplete(counterArray) {
+  const active = pickActiveRewardsCounter(counterArray);
+  if (!active) return false;
+  const progress = readRewardsCounterAttr(active, "progress");
+  const max = readRewardsCounterAttr(active, "max");
+  // A tier that still has room means the day is NOT done, whatever a stale
+  // `complete` flag on that entry claims. Checking this first is what stops an
+  // 18/60 mobile counter from being reported as finished.
+  if (max > 0 && progress < max) return false;
+  if (readRewardsCounterAttr(active, "complete") >= 1) return true;
+  return max > 0 && progress >= max;
+}
+
+function getRewardsSearchCounterDone(counters, name) {
+  return isRewardsSearchCounterComplete(counters?.[name]) ? 1 : 0;
+}
+
 function isDailySearchCounterDone(value) {
   return Number(value) >= 1;
 }
@@ -325,12 +343,6 @@ async function resetRuntime(config) {
     config.runtime.failed = 0;
     config.runtime.mobile = 0;
     config.runtime.act = 0;
-    config.runtime.stopping = 0;
-    config.runtime.retry = 0;
-    config.runtime.lastAction = null;
-    config.runtime.deadlineAt = null;
-    config.runtime.searchDeadlineAt = null;
-    config.runtime.activityDeadlineAt = null;
 
     await set(config);
     if (logs) {

@@ -19,12 +19,9 @@ export async function runDailySet({
     if (state.status === "complete") return { complete: true, state };
     const result = state.status === "pending" ? await scan(pass) : null;
     if (result) await onPass(result);
-    // Scrolling is useful progress; loading/unknown states must eventually
-    // recover even if a page-side scanner would ask to retry forever.
-    idle =
-      result?.retry || result?.clicked > 0 || result?.processed > 0
-        ? 0
-        : idle + 1;
+    // A retry request can repeat forever on a page whose controls never load.
+    // Only a confirmed click or processed tab counts as progress.
+    idle = result?.clicked > 0 || result?.processed > 0 ? 0 : idle + 1;
     if (idle >= 3) {
       if (!active()) return { complete: false, reason: "stopped", state };
       if (recoveries >= maxRecoveries) break;

@@ -18,18 +18,14 @@ export function createIsSessionStillActive(getCurrentSession) {
 export function createRunCoordinator(deps) {
   const { getConfig, setConfig, log } = deps;
 
-  let releasing = false;
-
   async function _resetRuntime(config) {
     config.runtime.running = 0;
-    config.runtime.stopping = 0;
     config.runtime.mode = null;
     config.runtime.currentSession = null;
     config.runtime.currentPhase = null;
     config.runtime.act = 0;
     config.runtime.rsaTab = null;
     config.runtime.mobile = 0;
-    config.runtime.updatedAt = Date.now();
     if (setConfig) await setConfig(config);
   }
 
@@ -39,7 +35,7 @@ export function createRunCoordinator(deps) {
       const current = config?.runtime?.currentSession;
       const isRunning = !!config?.runtime?.running;
 
-      if (!isRunning && !current && !config?.runtime?.stopping && !releasing) {
+      if (!isRunning) {
         return { allowed: true, reason: null };
       }
 
@@ -67,13 +63,6 @@ export function createRunCoordinator(deps) {
       config.runtime.currentSession = session;
       config.runtime.mode = type;
       config.runtime.running = 1;
-      config.runtime.stopping = 0;
-      config.runtime.startedAt = session.startedAt;
-      config.runtime.updatedAt = session.startedAt;
-      config.runtime.lastAction = "Khởi động";
-      config.runtime.retry = 0;
-      config.runtime.outcome = null;
-      config.runtime.outcomeReason = null;
 
       log &&
         log(
@@ -82,23 +71,9 @@ export function createRunCoordinator(deps) {
       return session;
     },
 
-    requestStop(reason = "user_requested") {
-      const runtime = getConfig()?.runtime;
-      if (!runtime?.currentSession) return false;
-      runtime.running = 0;
-      runtime.stopping = 1;
-      runtime.act = 0;
-      runtime.outcome = "skipped";
-      runtime.outcomeReason = reason;
-      return true;
-    },
-
-    async stopCurrentSession(reason = "user_stop", expectedSessionId) {
+    async stopCurrentSession(reason = "user_stop") {
       const config = getConfig();
       const session = config?.runtime?.currentSession;
-
-      if (expectedSessionId && session?.id !== expectedSessionId) return;
-      if (releasing) return;
 
       if (!session) {
         log &&
@@ -106,8 +81,7 @@ export function createRunCoordinator(deps) {
             `[COORDINATOR] - Stop requested but no active session.`,
             "warning",
           );
-        releasing = true;
-        try { await _resetRuntime(config); } finally { releasing = false; }
+        await _resetRuntime(config);
         return;
       }
 
@@ -115,8 +89,7 @@ export function createRunCoordinator(deps) {
         log(
           `[COORDINATOR] - Stopping session ${session.id} (type: ${session.type}). Reason: ${reason}`,
         );
-      releasing = true;
-      try { await _resetRuntime(config); } finally { releasing = false; }
+      await _resetRuntime(config);
     },
 
     isActiveSession(sessionId) {

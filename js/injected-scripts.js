@@ -1,4 +1,3 @@
-import { classifyAutomaticTask } from "./activity-policy.js";
 /**
  * Injected activity scripts. Each function returns a self-contained JavaScript
  * source string that the service worker runs in the Rewards page via
@@ -72,9 +71,68 @@ export function createRewardsSectionReadyProbe(patternSource) {
  * `safetyLimit`/`deferToCdp`/`pressPoint`) only need to exist by call time —
  * every caller declares them above this block.
  */
+// Shared by the dashboard, earn, solver, and claim scripts. A press is accepted
+// only when the topmost element at that viewport CSS point is the activating
+// control or a content child of it. Badges, point pills, images, and svg icons
+// sit in the middle of Rewards cards and swallow the click, so those points are
+// probed past rather than reported as a successful press.
+export function pressPointPickerSource() {
+  return String.raw`
+			const isDecoration = (el) => {
+				if (!el) return true;
+				const tag = String(el.tagName || '').toUpperCase();
+				if (tag === 'IMG' || tag === 'SVG' || tag === 'CANVAS' || tag === 'VIDEO' || tag === 'PATH' || tag === 'USE' || tag === 'PICTURE') return true;
+				if (typeof el.closest === 'function' && el.closest('svg')) return true;
+				const className = String(el.className && el.className.baseVal ? el.className.baseVal : el.className || '');
+				if (/rewardsbg|cornercircular|badge|pill|points-badge/i.test(className)) return true;
+				const own = el.childNodes && el.childNodes.length === 1 && el.childNodes[0].nodeType === 3
+					? String(el.textContent || '').replace(/\s+/g, ' ').trim()
+					: '';
+				if (own && /^\+?\s*\d{1,5}$/.test(own)) {
+					const rect = el.getBoundingClientRect();
+					if (rect.width <= 96 && rect.height <= 64) return true;
+				}
+				return false;
+			};
+			const hitActivates = (control, hit) => {
+				if (!hit || !control) return false;
+				if (hit === control) return true;
+				if (!control.contains(hit)) return false;
+				let node = hit;
+				while (node && node !== control) {
+					if (isDecoration(node)) return false;
+					node = node.parentElement;
+				}
+				return node === control;
+			};
+			const pickPressPoint = (control) => {
+				const rect = control.getBoundingClientRect();
+				const visibleLeft = Math.max(rect.left, 1);
+				const visibleRight = Math.min(rect.right, (window.innerWidth || 0) - 2);
+				const visibleTop = Math.max(rect.top, 1);
+				const visibleBottom = Math.min(rect.bottom, (window.innerHeight || 0) - 2);
+				if (!(visibleRight > visibleLeft && visibleBottom > visibleTop)) return null;
+				const width = visibleRight - visibleLeft;
+				const height = visibleBottom - visibleTop;
+				const fractions = [0.5, 0.78, 0.22, 0.9, 0.1];
+				const points = [];
+				for (const py of fractions) {
+					for (const px of fractions) {
+						points.push([visibleLeft + width * px, visibleTop + height * py]);
+					}
+				}
+				for (const [x, y] of points) {
+					if (x < 1 || y < 1 || x > (window.innerWidth || 0) - 2 || y > (window.innerHeight || 0) - 2) continue;
+					const element = document.elementFromPoint ? document.elementFromPoint(x, y) : null;
+					if (hitActivates(control, element)) return { x: x, y: y };
+				}
+				return null;
+			};
+`;
+}
+
 function activityDomHelpers(cardKeyword, maxCardTextLength) {
   return `
-      const classifyAutomaticTask = ${classifyAutomaticTask.toString()};
 			// Set by openTarget whenever it declines a card, so a pass can report why
 			// it came back empty instead of returning an unexplained zero.
 			let lastOpenSkip = '';
@@ -205,49 +263,24 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 					node.closest?.('article, li, [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"], [class*="group/ctrl"], [class*="cursor-pointer"]') ||
 					node;
 			};
+			${pressPointPickerSource()}
 			const clickLikeUser = (target) => {
-				const rect = target.getBoundingClientRect();
-				const visibleLeft = Math.max(rect.left, 1);
-				const visibleRight = Math.min(rect.right, window.innerWidth - 2);
-				const visibleTop = Math.max(rect.top, 1);
-				const visibleBottom = Math.min(rect.bottom, window.innerHeight - 2);
-				// Fully offscreen: elementFromPoint is useless there, but synthetic
-				// events + target.click() still work, so probe nothing and fall through.
-				const onscreen = visibleRight > visibleLeft && visibleBottom > visibleTop;
-				const centerX = onscreen ? (visibleLeft + visibleRight) / 2 : (rect.left + rect.right) / 2;
-				const centerY = onscreen ? (visibleTop + visibleBottom) / 2 : (rect.top + rect.bottom) / 2;
-				// A card's centre is frequently occupied by a badge, image, or a
-				// transient React layer.  Re-evaluate a small grid on every click,
-				// rather than assuming one centre coordinate works at every window
-				// size and display scale.  All values come from getBoundingClientRect(),
-				// so they remain CSS-viewport coordinates for CDP's Input domain.
-				const points = onscreen ? [
-					[centerX, centerY],
-					[visibleLeft + (visibleRight - visibleLeft) * 0.2, visibleTop + (visibleBottom - visibleTop) * 0.2],
-					[visibleLeft + (visibleRight - visibleLeft) * 0.8, visibleTop + (visibleBottom - visibleTop) * 0.2],
-					[visibleLeft + (visibleRight - visibleLeft) * 0.2, visibleTop + (visibleBottom - visibleTop) * 0.8],
-					[visibleLeft + (visibleRight - visibleLeft) * 0.8, visibleTop + (visibleBottom - visibleTop) * 0.8],
-					[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
-					[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), centerY],
-					[centerX, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],
-					[centerX, visibleBottom - Math.min(12, (visibleBottom - visibleTop) / 2)]
-				] : [];
-				const hit = points
-					.map(([x, y]) => ({ x, y, element: document.elementFromPoint(x, y) }))
-					.find((point) => point.element && (target.contains(point.element) || target === point.element));
-				// A covered target must fail closed. Dispatching synthetic events directly
-				// on it can mark work as handled while the visible UI never received it.
-				if (!hit) {
-					pressPoint = null;
-					return false;
-				}
-				const x = hit.x;
-				const y = hit.y;
-				const eventTarget = hit.element;
+				// Viewport CSS pixels from the control's visible box. The centre is
+				// often a badge or a full-bleed image; only a point whose topmost
+				// element activates the control is handed to CDP.
+				const point = pickPressPoint(target);
 				if (deferToCdp) {
-					pressPoint = { x, y };
+					if (!point) {
+						pressPoint = null;
+						return false;
+					}
+					pressPoint = { x: point.x, y: point.y };
 					return true;
 				}
+				const rect = target.getBoundingClientRect();
+				const x = point ? point.x : Math.max(1, Math.min((window.innerWidth || 2) - 2, rect.left + rect.width / 2));
+				const y = point ? point.y : Math.max(1, Math.min((window.innerHeight || 2) - 2, rect.top + rect.height / 2));
+				const eventTarget = point ? (document.elementFromPoint(x, y) || target) : target;
 				try {
 					target.focus?.({ preventScroll: true });
 				} catch (error) {}
@@ -308,7 +341,6 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 					lastOpenSkip = 'target not visible';
 					return false;
 				}
-				if (target.disabled || target.getAttribute?.('aria-disabled') === 'true' || target.hasAttribute?.('disabled')) { lastOpenSkip = 'unavailable'; return false; }
 				const key = keyFor(target, type, text);
 				// Already-handled cards are the normal steady state, not a failure:
 				// leave lastOpenSkip empty so they stay out of the pass diagnostics.
@@ -439,8 +471,7 @@ ${activityDomHelpers("daily", 520)}
 					};
 				}
 			}
-			if (!dailyHeading) return { clicked, skipped, openedKeys, retry: false, reason: 'Daily set section unavailable' };
-			const unboundedDailySet = false;
+			const unboundedDailySet = !dailyHeading;
 			// Section boundaries must be real headings. Generic div/span text often
 			// contains "activities" inside the first Daily Set card and previously
 			// truncated the region before that card, producing a silent click miss.
@@ -492,7 +523,6 @@ ${activityDomHelpers("daily", 520)}
 			// completed — those words sit on real Daily set cards ("In progress",
 			// "About this quiz", "Daily Set Streak"). Completion is isDone's job.
 			const skipPattern = /learn more|privacy|terms|download app|not eligible|tìm hiểu thêm|giới thiệu|bảo mật|điều khoản|tải ứng dụng|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
-			const unsupportedTaskPattern = /quiz|trivia|punch|game|purchase|buy|shop|order|download|install|app\\b|sweepstake|contest|trắc nghiệm|câu hỏi|đố vui|trò chơi|mua|đặt hàng|tải|cài đặt/i;
 			const expandPattern = /earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng/i;
 
 			const nodes = Array.from(mainRoot.querySelectorAll(
@@ -527,10 +557,6 @@ ${activityDomHelpers("daily", 520)}
 					if (hasPoints || activityHrefPattern.test(href)) {
 						skipped.push({ type, text: text.slice(0, 90), reason: 'already done' });
 					}
-					continue;
-				}
-				if (!classifyAutomaticTask({ title: text, url: href }).safe) {
-					skipped.push({ type, text: text.slice(0, 90), reason: 'unsupported automatic task' });
 					continue;
 				}
 				// Point-bearing cards are never chrome. Applying skipPattern to
@@ -677,9 +703,6 @@ ${activityDomHelpers("earn", 560)}
 				if (/completed|earned last month|already done|claimed|you did it|đã hoàn thành|đã nhận|đã hoàn tất|đã xong/i.test(txt)) {
 					return 'already completed';
 				}
-				if (el?.disabled === true || el?.getAttribute?.('aria-disabled') === 'true' || el?.hasAttribute?.('disabled')) {
-					return 'unavailable';
-				}
 				const lockProbe = Array.from(el.querySelectorAll('[aria-label], [title], [class]'))
 					.some((node) => /lock|locked|level required|required|bị khóa|yêu cầu/i.test([
 						node.getAttribute('aria-label'),
@@ -720,16 +743,6 @@ ${activityDomHelpers("earn", 560)}
 				markerNodes.find((item) => item.semantic && item.text.length <= 48 && primaryKeepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.semantic && item.text.length <= 48 && keepHeadingPattern.test(item.text)) ||
 				markerNodes.find((item) => item.text.length <= 48 && keepHeadingPattern.test(item.text));
-			const keepEarningRoot = document.querySelector('#moreactivities, [id*="moreactivities" i], [data-bi-area*="MoreActivities" i], [data-bi-id*="moreactivities" i]');
-			if (!keepHeading && keepEarningRoot && hasLayout(keepEarningRoot)) {
-				const rootHeading = keepEarningRoot.querySelector('h1, h2, h3, h4, [role="heading"]') || keepEarningRoot;
-				keepHeading = {
-					el: rootHeading,
-					text: textOf(rootHeading) || 'Keep earning',
-					rect: rootHeading.getBoundingClientRect(),
-					semantic: true
-				};
-			}
 			if (!keepHeading) {
 				const doc = document.documentElement;
 				const maxScroll = Math.max(
@@ -754,8 +767,7 @@ ${activityDomHelpers("earn", 560)}
 					};
 				}
 			}
-			if (!keepHeading) return { clicked, skipped, openedKeys, retry: false, reason: 'Keep earning section unavailable' };
-			const unboundedEarn = false;
+			const unboundedEarn = !keepHeading;
 			const nextHeading = unboundedEarn ? null : markerNodes.find((item) =>
 				item.rect.top > keepHeading.rect.bottom + 4 &&
 				item.semantic &&
@@ -764,7 +776,7 @@ ${activityDomHelpers("earn", 560)}
 			// Same exclusive-<section> rule as Daily set. Geometric
 			// heading→next-heading bounds truncated a tall Keep earning grid
 			// and, on a short one, swallowed the following section.
-			const keepSection = unboundedEarn ? null : (keepEarningRoot?.closest?.('section') || keepHeading.el.closest?.('section') || keepEarningRoot);
+			const keepSection = unboundedEarn ? null : keepHeading.el.closest?.('section');
 			const sectionIsExclusive = Boolean(keepSection) && !markerNodes.some((item) =>
 				item.semantic &&
 				item.el !== keepHeading.el &&
@@ -791,7 +803,6 @@ ${activityDomHelpers("earn", 560)}
 			const activityHrefPattern = /quiz|poll|punch|quest|activity|explore|dset|offer|reward|msrewards|rewards/i;
 			const activityTextPattern = /quiz|poll|play|watch|explore|search now|complete|claim|check.?in|view|start|earn|tr\\u1eafc nghi\\u1ec7m|th\\u0103m d\\u00f2|c\\u00e2u h\\u1ecfi|ch\\u01a1i|xem|kh\\u00e1m ph\\u00e1|b\\u1eaft \\u0111\\u1ea7u|ki\\u1ebfm|nh\\u1eadn/i;
 			const fallbackSkipPattern = /learn more|privacy|terms|download app|redeem|donate|gift card|sweepstake|entries|coupon|discount|cashback|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
-			const unsupportedTaskPattern = /quiz|trivia|punch|game|purchase|buy|shop|order|download|install|app\\b|sweepstake|contest|tr\\u1eafc nghi\\u1ec7m|c\\u00e2u h\\u1ecfi|\\u0111\\u1ed1 vui|tr\\u00f2 ch\\u01a1i|mua|\\u0111\\u1eb7t h\\u00e0ng|t\\u1ea3i|c\\u00e0i \\u0111\\u1eb7t/i;
 			const fallbackCandidates = [];
 			const rewardPointsPattern = /(?:^|[^\\d])\\+\\s*[1-9]\\d*(?:\\s*(?:points?|pts?|điểm|đ))?(?![a-zA-Z0-9_])|(?:^|[^\\d])(?:[1-9]\\d*)\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const zeroPointsPattern = /(?:^|[^\\d])(?:\\+\\s*)?0\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
@@ -817,10 +828,6 @@ ${activityDomHelpers("earn", 560)}
 				const skipReason = skipReasonFor(card) || skipReasonFor(target) || (anchor ? skipReasonFor(anchor) : '');
 				if (skipReason) {
 					skipped.push({ type, text: text.slice(0, 90), reason: skipReason });
-					continue;
-				}
-				if (!classifyAutomaticTask({ title: text, url: href }).safe) {
-					skipped.push({ type, text: text.slice(0, 90), reason: 'unsupported automatic task' });
 					continue;
 				}
 				if (nonCardPattern.test(text)) {
@@ -982,8 +989,6 @@ export function createSolveActivityScript(deferToCdp = false) {
 					el.closest('button, a[href], [role="button"], [role="radio"], [tabindex]:not([tabindex="-1"])') ||
 					el.closest('label') ||
 					el;
-                const pollRoot = document.querySelector('.bt_poll, .b_pole, [data-testid="poll"], [aria-label="Daily poll"]');
-                if (!pollRoot || /quiz|trivia/i.test(document.title)) return { clicked: false, reason: 'no clear poll', url: location.href };
 				const prioritySelectors = [
 					'input[type="radio"]:not(:checked)',
 					'a[href*="WQCI" i][href*="WQId" i][href*="BTJQOD" i]',
@@ -991,12 +996,8 @@ export function createSolveActivityScript(deferToCdp = false) {
 					'[data-testid*="answer" i]',
 					'[data-testid*="option" i]',
 					'.rqOption', '.rq_button', '.wk_choicesInstLink', '.bt_option', '.quizOption',
-					'.b_cards [role="button"]',
-					'.b_pole [role="button"]',
-					'.bt_poll [role="button"]',
 					'[role="radio"]',
-					'[class*="option" i]',
-					'[class*="choice" i]',
+					'[class*="option"]',
 					'[role="button"]',
 					'button',
 					'[aria-label]',
@@ -1027,7 +1028,7 @@ export function createSolveActivityScript(deferToCdp = false) {
 				const seen = new Set();
 				const scored = [];
 				for (let pri = 0; pri < prioritySelectors.length; pri++) {
-					for (const candidate of pollRoot.querySelectorAll(prioritySelectors[pri])) {
+					for (const candidate of document.querySelectorAll(prioritySelectors[pri])) {
 						if (seen.has(candidate)) continue;
 						seen.add(candidate);
 						const target = clickTargetFor(candidate);
@@ -1077,19 +1078,17 @@ export function createSolveActivityScript(deferToCdp = false) {
 						document.documentElement.style.scrollBehavior = htmlStyle;
 						document.body.style.scrollBehavior = bodyStyle;
 					} catch (_) {}
-					const rect = target.getBoundingClientRect();
-					const cx = Math.max(1, Math.min(window.innerWidth - 2, rect.left + rect.width / 2));
-					const cy = Math.max(1, Math.min(window.innerHeight - 2, rect.top + rect.height / 2));
-					const hit = document.elementFromPoint?.(cx, cy);
+					${pressPointPickerSource()}
 					if (deferToCdp) {
-						if (!hit || !(target === hit || target.contains(hit))) {
+						const pressPoint = pickPressPoint(target);
+						if (!pressPoint) {
 							return { clicked: false, reason: 'target covered or moved', url: location.href };
 						}
 						return {
 							clicked: true,
 							text: text.slice(0, 80) || target.tagName,
 							targetKey,
-							pressPoint: { x: cx, y: cy },
+							pressPoint,
 							url: location.href
 						};
 					}
@@ -1120,7 +1119,6 @@ export function createSolveActivityScript(deferToCdp = false) {
 export function createClaimReadyScript(
   deferToCdp = false,
   allowStandaloneConfirm = false,
-  inspectOnly = false,
 ) {
   return `
 			(function() {
@@ -1194,7 +1192,6 @@ export function createClaimReadyScript(
 					}
 				}
 
-                if (${Boolean(inspectOnly)}) return { clicked: false, count: pendingCount, reason: 'inspection' };
 				if (pendingCount === 0) {
 					return { clicked: false, count: 0, reason: 'nothing pending' };
 				}
@@ -1284,46 +1281,9 @@ export function createClaimReadyScript(
 					document.body.style.scrollBehavior = bodyStyle;
 				} catch (_) {}
 
-				const pressPoint = (function press(el) {
-					const rect = el.getBoundingClientRect();
-					const visibleLeft = Math.max(rect.left, 1);
-					const visibleRight = Math.min(rect.right, window.innerWidth - 2);
-					const visibleTop = Math.max(rect.top, 1);
-					const visibleBottom = Math.min(rect.bottom, window.innerHeight - 2);
-					if (visibleRight <= visibleLeft || visibleBottom <= visibleTop) return null;
-					const cx = (visibleLeft + visibleRight) / 2;
-					const cy = (visibleTop + visibleBottom) / 2;
-					const points = [
-						[cx, cy],
-						[visibleLeft + Math.min(12, (visibleRight - visibleLeft) / 2), cy],
-						[visibleRight - Math.min(12, (visibleRight - visibleLeft) / 2), cy],
-						[cx, visibleTop + Math.min(12, (visibleBottom - visibleTop) / 2)],
-						[cx, visibleBottom - Math.min(12, (visibleBottom - visibleTop) / 2)]
-					];
-					const hit = points
-						.map(([x, y]) => ({ x, y, element: document.elementFromPoint?.(x, y) }))
-						.find((point) => point.element && (el === point.element || el.contains(point.element)));
-					if (!hit) return null;
-					if (deferToCdp) return { x: hit.x, y: hit.y };
-					const x = hit.x;
-					const y = hit.y;
-					const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
-					const pbase = Object.assign({}, base, { pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 });
-					const up = { buttons: 0 };
-					const PE = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;
-					const ME = typeof MouseEvent !== 'undefined' ? MouseEvent : Event;
-					const fire = (Ctor, type, opts) => { try { el.dispatchEvent(new Ctor(type, opts)); } catch (_) {} };
-					fire(PE, 'pointerover', pbase);
-					fire(PE, 'pointerenter', pbase);
-					fire(PE, 'pointerdown', pbase);
-					fire(ME, 'mousedown', base);
-					fire(PE, 'pointerup', Object.assign({}, pbase, up));
-					fire(ME, 'mouseup', Object.assign({}, base, up));
-					fire(ME, 'click', Object.assign({}, base, up));
-					try { el.click(); } catch (_) {}
-					return { x, y };
-				})(target);
-				if (!pressPoint) {
+				${pressPointPickerSource()}
+				const picked = pickPressPoint(target);
+				if (deferToCdp && !picked) {
 					return {
 						clicked: false,
 						retry: true,
@@ -1332,6 +1292,29 @@ export function createClaimReadyScript(
 						targetKey,
 						reason: 'target covered or moved',
 					};
+				}
+				const rect = target.getBoundingClientRect();
+				const pressPoint = picked || {
+					x: Math.max(1, Math.min((window.innerWidth || 2) - 2, (rect.left + rect.right) / 2)),
+					y: Math.max(1, Math.min((window.innerHeight || 2) - 2, (rect.top + rect.bottom) / 2))
+				};
+				if (!deferToCdp) {
+					const x = pressPoint.x;
+					const y = pressPoint.y;
+					const base = { bubbles: true, cancelable: true, composed: true, view: window, clientX: x, clientY: y, button: 0, buttons: 1 };
+					const pbase = Object.assign({}, base, { pointerId: 1, pointerType: 'mouse', isPrimary: true, width: 1, height: 1 });
+					const up = { buttons: 0 };
+					const PE = typeof PointerEvent !== 'undefined' ? PointerEvent : MouseEvent;
+					const ME = typeof MouseEvent !== 'undefined' ? MouseEvent : Event;
+					const fire = (Ctor, type, opts) => { try { target.dispatchEvent(new Ctor(type, opts)); } catch (_) {} };
+					fire(PE, 'pointerover', pbase);
+					fire(PE, 'pointerenter', pbase);
+					fire(PE, 'pointerdown', pbase);
+					fire(ME, 'mousedown', base);
+					fire(PE, 'pointerup', Object.assign({}, pbase, up));
+					fire(ME, 'mouseup', Object.assign({}, base, up));
+					fire(ME, 'click', Object.assign({}, base, up));
+					try { target.click(); } catch (_) {}
 				}
 				return {
 					clicked: true,

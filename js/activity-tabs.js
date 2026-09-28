@@ -20,38 +20,21 @@ export function isRewardActivityUrl(url, allowedHosts = DEFAULT_REWARD_HOSTS) {
   }
 }
 
-export function isActivityOpenedTab(
-  tab,
-  mainTabId,
-  existingTabIds,
-  allowedHosts = DEFAULT_REWARD_HOSTS,
-) {
+// A tab counts as opened by the activity click when its id was not in the
+// snapshot taken immediately before the press and it is not the Rewards tab.
+// target=_blank plus rel=noopener drops openerTabId, and the new tab is often
+// still about:blank or already on a non-reward host by the time we look.
+// Those tabs are still ours to close.
+export function isActivityOpenedTab(tab, mainTabId, existingTabIds) {
   if (!tab?.id || Number(tab.id) === Number(mainTabId)) return false;
   if (existingTabIds?.has(tab.id)) return false;
+  return true;
+}
 
-  // If the tab's opener is explicitly another tab, ignore it.
-  if (
-    tab.openerTabId != null &&
-    Number(tab.openerTabId) !== Number(mainTabId)
-  ) {
-    return false;
-  }
-
-  const url = String(tab.url || tab.pendingUrl || "");
-  const hasMatchingOpener = Number(tab.openerTabId) === Number(mainTabId);
-
-  // If it has matching opener, accept about:blank or any reward url.
-  if (hasMatchingOpener) {
-    return url === "about:blank" || isRewardActivityUrl(url, allowedHosts);
-  }
-
-  // Modern browsers strip openerTabId for target="_blank" (rel="noopener").
-  // For newly created tabs without openerTabId, check if it's a reward activity URL.
-  if (tab.openerTabId == null || tab.openerTabId === undefined) {
-    return isRewardActivityUrl(url, allowedHosts);
-  }
-
-  return false;
+export function tabsToClose(tabs, mainTabId, existingTabIds) {
+  return (tabs || []).filter((tab) =>
+    isActivityOpenedTab(tab, mainTabId, existingTabIds),
+  );
 }
 
 export { DEFAULT_REWARD_HOSTS };

@@ -12,7 +12,6 @@
 // Popup → service worker commands.
 export const ACTIONS = {
   START: "start",
-  REFRESH_QUOTA: "refreshQuota",
   SCHEDULE: "schedule",
   STOP: "stop",
   ACTIVITY: "activity",

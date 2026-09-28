@@ -1,47 +1,20 @@
 /**
  * Pure helpers for search phase bookkeeping.
  *
- * User counts cap the plan. A fresh per-device counter trims it to estimated
- * remaining work; delayed credit never causes unbounded make-up searches.
+ * The loop runs exactly the plan the user set (desk/mob counts). It does not
+ * add make-up searches when the Rewards counter lags — shortfalls are left for
+ * a later re-run.
+ *
+ * Checkpoint helpers still compare local navigations to the real counter, but
+ * only a FULL counter stops a phase — a merely frozen one is indistinguishable
+ * from a Rewards API publishing in a slow batch, so the plan runs to the end.
  */
 
 export const DEFAULT_POINTS_PER_SEARCH = 3;
 
 function finiteNumber(value) {
-  if (value === null || value === undefined || value === "") return null;
   const number = Number(value);
   return Number.isFinite(number) ? number : null;
-}
-
-// The conversion is an estimate using the configured point unit; a fresh
-// counter, never local navigation count, confirms that quota is full.
-export function getRemainingSearches(snapshot, counterField, counterMaxField,
-  pointsPerSearch = DEFAULT_POINTS_PER_SEARCH) {
-  const progress = finiteNumber(snapshot?.[counterField]);
-  const max = finiteNumber(snapshot?.[counterMaxField]);
-  const unit = finiteNumber(pointsPerSearch);
-  if (progress === null || progress < 0 || max === null || max <= 0 ||
-      unit === null || unit <= 0) return null;
-  return Math.ceil(Math.max(0, max - progress) / unit);
-}
-
-export function limitPlanForRemainingQuota(plan, snapshot) {
-  const limited = { ...plan };
-  for (const [key, progress, max] of [
-    ["desk", "pcProgress", "pcMax"],
-    ["mob", "mobProgress", "mobMax"],
-  ]) {
-    const remaining = getRemainingSearches(snapshot, progress, max);
-    if (remaining !== null) {
-      limited[key] = Math.min(Math.max(0, Math.floor(Number(plan?.[key]) || 0)), remaining);
-    }
-  }
-  return limited;
-}
-
-export function getSearchCheckpointInterval(snapshot, counterField, counterMaxField) {
-  const remaining = getRemainingSearches(snapshot, counterField, counterMaxField);
-  return remaining !== null && remaining <= 4 ? 1 : 4;
 }
 
 export function createSearchCreditGoal(
@@ -83,8 +56,8 @@ export function shouldContinueSearch({
   attemptedIterations,
   requestedSearches,
 }) {
-  const attempted = Math.max(0, Math.floor(Number(attemptedIterations) || 0));
-  const requested = Math.max(0, Math.floor(Number(requestedSearches) || 0));
+  const attempted = Math.max(0, Number(attemptedIterations) || 0);
+  const requested = Math.max(0, Number(requestedSearches) || 0);
   return attempted < requested;
 }
 

@@ -115,7 +115,9 @@ export function normalizeOffer(item, category) {
   const title = String(
     item.title || item.name || item.description || "",
   ).trim();
-  const type = String(item.promotionType || item.activityType || "").toLowerCase();
+  const type = String(
+    item.promotionType || item.activityType || "",
+  ).toLowerCase();
   const identity = String(item.offerId || item.name || url || title);
   if (!identity) return null;
   return {
@@ -144,7 +146,7 @@ export function collectPendingOffers(payload, now = new Date()) {
   if (daily && typeof daily === "object") {
     const todayKeys = promotionDateKeys(now);
     const matched = Object.keys(daily).filter((key) => todayKeys.has(key));
-    const useKeys = matched;
+    const useKeys = matched.length > 0 ? matched : Object.keys(daily);
     for (const key of useKeys) {
       const list = daily[key];
       if (!Array.isArray(list)) continue;
@@ -158,27 +160,4 @@ export function collectPendingOffers(payload, now = new Date()) {
   }
 
   return offers;
-}
-
-export const ACTIVITY_EARN_PATH = "earn";
-export const ACTIVITY_HOME_PATH = "";
-export const ACTIVITY_DASHBOARD_PATH = "dashboard";
-
-// An absent offer is unknown, never proof of completion. Match today's exact
-// identity (API key or destination URL), and require explicit server evidence.
-export function getConfirmedActivityKeys(payload, keys, now = new Date()) {
-  const dashboard = findDashboardPayload(payload);
-  const completed = new Set();
-  const add = (item, category) => {
-    if (!item || !isCompleteOffer(item) || isLockedOffer(item)) return;
-    const url = offerUrl(item);
-    const identity = String(item.offerId || item.name || url || item.title || "");
-    completed.add(`${category}|${identity}`);
-    if (url) completed.add(url);
-  };
-  for (const date of promotionDateKeys(now)) {
-    for (const item of dashboard?.dailySetPromotions?.[date] || []) add(item, "daily-set");
-  }
-  for (const item of dashboard?.morePromotions || []) add(item, "keep-earning");
-  return keys.filter((key) => completed.has(key));
 }

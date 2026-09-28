@@ -119,17 +119,6 @@ export function planTypingSteps(query, options = {}) {
   return steps;
 }
 
-// Test/debug helper: replay steps to confirm they reproduce the query.
-export function applyTypingSteps(steps) {
-  let buffer = "";
-  for (const step of steps || []) {
-    if (step.type === "insert") buffer += step.text;
-    else if (step.type === "backspace")
-      buffer = buffer.slice(0, Math.max(0, buffer.length - step.count));
-  }
-  return buffer;
-}
-
 /**
  * Topic-coherent niche picker. A real session searches within a subject for a
  * few queries before moving on; re-rolling the category on every single query
