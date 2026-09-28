@@ -10,7 +10,7 @@ Quét mã bên dưới, hoặc chuyển khoản theo số tài khoản.
 
 ### Vietcombank
 
-<img src="docs/vietcombank.png" alt="Vietcombank QR" width="180" />
+<img src="docs/vietcombank.png" alt="Vietcombank QR" width="140" height="181" />
 
 - Chủ tài khoản: HO VIET VAN
 - Số tài khoản: `0231000639001`
@@ -18,7 +18,7 @@ Quét mã bên dưới, hoặc chuyển khoản theo số tài khoản.
 
 ### MoMo
 
-<img src="docs/momo.jpg" alt="MoMo QR" width="180" />
+<img src="docs/momo.jpg" alt="MoMo QR" width="140" height="153" />
 
 - Chủ ví: HO VIET VAN
 - Số MoMo: `0326363942`
