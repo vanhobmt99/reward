@@ -2,6 +2,25 @@
 
 Search Auto là tiện ích Chrome hỗ trợ tìm kiếm Bing và làm nhiệm vụ Microsoft Rewards hằng ngày.
 
+## Ủng hộ
+
+Nếu project hữu ích, bạn có thể [thêm một sao trên GitHub](https://github.com/vanhobmt99/reward) hoặc ủng hộ qua một trong hai mã sau.
+
+### Vietcombank
+
+<img src="docs/vietcombank.png" alt="Mã QR Vietcombank" width="210" height="272" />
+
+- Chủ tài khoản: HO VIET VAN
+- Số tài khoản: `0231000639001`
+- Ngân hàng: Vietcombank
+
+### MoMo
+
+<img src="docs/momo.jpg" alt="Mã QR MoMo" width="240" height="263" />
+
+- Chủ ví: HO VIET VAN
+- Số MoMo: `0326363942`
+
 ## Tiện ích làm gì?
 
 - Tìm kiếm theo số lần bạn chọn cho **Máy tính** và **Điện thoại**.
@@ -67,22 +86,3 @@ Các nút màu đỏ có thể xóa dữ liệu hoặc đặt lại tiện ích.
 - **Nhiệm vụ Rewards không tự bấm trên Edge:** mở tab Rewards đang được giữ lại và làm thủ công trên trang đó.
 
 Trong popup, **Hướng dẫn sử dụng → Mở** mở bản hướng dẫn ngay trong tiện ích.
-
-## Ủng hộ
-
-Nếu project hữu ích, bạn có thể [thêm một sao trên GitHub](https://github.com/vanhobmt99/reward) hoặc ủng hộ qua một trong hai mã sau.
-
-### Vietcombank
-
-<img src="docs/vietcombank.png" alt="Mã QR Vietcombank" width="140" height="181" />
-
-- Chủ tài khoản: HO VIET VAN
-- Số tài khoản: `0231000639001`
-- Ngân hàng: Vietcombank
-
-### MoMo
-
-<img src="docs/momo.jpg" alt="Mã QR MoMo" width="160" height="175" />
-
-- Chủ ví: HO VIET VAN
-- Số MoMo: `0326363942`
