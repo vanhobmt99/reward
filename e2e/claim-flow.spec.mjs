@@ -52,6 +52,62 @@ test("Daily set verification rejects skeletons and partial completion", async ({
   });
 });
 
+test("a full hidden Daily set counts while the visible grid is still pulsing", async ({
+  page,
+}) => {
+  await page.setContent(`<main>
+    <section id="dailyset">
+      <h2>Daily set</h2>
+      <div class="animate-pulse" style="width:240px;height:80px"></div>
+    </section>
+  </main>
+  <div hidden>
+    <h2>Daily set</h2>
+    <a href="https://www.bing.com/search?q=a">10 Completed</a>
+    <a href="https://www.bing.com/search?q=b">10 Completed</a>
+    <a href="https://www.bing.com/search?q=c">+10 Sydney</a>
+  </div>`);
+  expect(await page.evaluate(createDailySetStateProbe())).toMatchObject({
+    status: "pending",
+    done: 2,
+    total: 3,
+  });
+});
+
+test("parked Keep earning cards are classified while the visible grid is still pulsing", async ({
+  page,
+}) => {
+  await page.setContent(`<main>
+    <section id="quests">
+      <h2>Quests</h2>
+      <div class="animate-pulse" style="width:240px;height:80px"></div>
+    </section>
+    <section id="moreactivities">
+      <h2>Keep earning</h2>
+      <div class="animate-pulse" style="width:240px;height:80px"></div>
+    </section>
+  </main>
+  <div hidden id="quests-copy">
+    <h2>Quests</h2>
+    <a href="https://rewards.bing.com/earn/quest/app" style="display:block;width:320px;height:80px">Rewards App weekly Exclusive Quest 1/8 tasks</a>
+  </div>
+  <div hidden id="keep-copy">
+    <h2>Keep earning</h2>
+    <button type="button" style="display:block;width:320px;height:40px">Keep earning 45/45</button>
+    <a href="https://www.bing.com/search?q=bird" style="display:block;width:320px;height:80px">Large powerful bird 15 Completed</a>
+    <a href="https://rewards.bing.com/redeem/sku/000499012006" style="display:block;width:320px;height:80px">Claim Sea of Thieves</a>
+    <a href="https://www.bing.com/search?q=gardens" style="display:block;width:320px;height:80px">Virtual gardens +15</a>
+  </div>`);
+  const result = await page.evaluate(createEarnActivityScript([], 1, true));
+  expect(result.reason).not.toBe("keep earning cards still loading");
+  expect(result.openedKeys).toEqual(["https://www.bing.com/search?q=gardens"]);
+  expect(result.pressPoint).toBeTruthy();
+  expect(result.skipped.map((item) => item.reason)).toEqual(
+    expect.arrayContaining(["already completed", "not an earn-points card"]),
+  );
+  expect(JSON.stringify(result)).not.toContain("/earn/quest/app");
+});
+
 test("Keep earning is scanned when a separate Quests section precedes it", async ({
   page,
 }) => {

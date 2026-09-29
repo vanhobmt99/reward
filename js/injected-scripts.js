@@ -9,27 +9,40 @@
  */
 
 /**
- * Probe run by waitForRewardsSection. The new dashboard streams a heading +
+ * Probe run by waitForRewardsSection. The dashboard streams a heading plus
  * pulse skeletons into the visible <section>, and parks the real cards in a
- * hidden Next.js placeholder (`<div hidden id="S:5">`). Matching any heading
- * that merely lacks animate-pulse treated that hidden copy as "ready" and the
- * first Daily set pass then scanned the empty visible shell.
+ * hidden Next.js placeholder (`<div hidden id="S:5">`, id not stable). A full
+ * parked grid is the card source while that visible section is still pulsing.
+ * A hydrated visible grid (3+ cards, no need to read the placeholder) still
+ * wins, so a stale hidden copy cannot mark the set complete early.
  */
 export function createDailySetStateProbe() {
   return `(() => {
     const visible = el => !el.closest('[hidden], template, [aria-hidden="true"]') &&
       el.getBoundingClientRect().width > 0 && el.getBoundingClientRect().height > 0 &&
       getComputedStyle(el).visibility !== 'hidden';
+    const cardText = el => (el.innerText || el.textContent || '').replace(/\\s+/g, ' ').trim();
+    const isDailyHeading = el => /^(daily set|bộ hàng ngày|bộ nhiệm vụ)$/i.test((el.textContent || '').trim());
     const headings = [...document.querySelectorAll('h1,h2,h3,[role="heading"]')];
-    const heading = headings.find(el => visible(el) && /^(daily set|bộ hàng ngày|bộ nhiệm vụ)$/i.test(el.textContent.trim()));
+    const heading = headings.find(el => visible(el) && isDailyHeading(el));
     const section = heading?.closest('section') || document.querySelector('#dailyset');
     if (!section || !visible(section)) return { status: 'unknown', reason: 'Daily set section missing' };
-    if (section.querySelector('[class*="animate-pulse"], [aria-busy="true"]'))
+    const pulsing = !!section.querySelector('[class*="animate-pulse"], [aria-busy="true"]');
+    const looksLikeCard = el => /(?:\\+?\\s*\\d+|completed|đã hoàn thành)/i.test(cardText(el));
+    const visibleCards = [...section.querySelectorAll('a[href]')].filter(el => visible(el) && looksLikeCard(el));
+    const streamedCards = [...document.querySelectorAll('[hidden], [data-rsa-revealed="1"]')].filter((host) => {
+      if (host.closest('template') || section.contains(host)) return false;
+      const first = host.querySelector('h1, h2, h3, [role="heading"]');
+      return !!first && isDailyHeading(first) && !!host.querySelector('a[href]');
+    }).flatMap((host) => [...host.querySelectorAll('a[href]')].filter(looksLikeCard));
+    const cards = visibleCards.length >= 3 ? visibleCards :
+      (streamedCards.length >= 3 ? streamedCards : visibleCards);
+    if (pulsing && visibleCards.length < 3 && streamedCards.length < 3)
       return { status: 'loading', reason: 'Daily set still loading' };
-    const cards = [...section.querySelectorAll('a[href]')].filter(el => visible(el) &&
-      /(?:\\+?\\s*\\d+|completed|đã hoàn thành)/i.test(el.innerText));
     if (cards.length < 3) return { status: 'unknown', reason: 'Daily set cards incomplete', total: cards.length };
-    const done = cards.filter(el => /\\bcompleted\\b|đã hoàn thành|đã hoàn tất/i.test(el.innerText)).length;
+    // Hidden textContent glues the badge to the status ("10Completed"), so a
+    // word boundary before "completed" never matches and a finished set stays pending.
+    const done = cards.filter(el => /completed|đã hoàn thành|đã hoàn tất/i.test(cardText(el))).length;
     return { status: done === cards.length ? 'complete' : 'pending', done, total: cards.length };
   })()`;
 }
@@ -46,7 +59,15 @@ export function createRewardsSectionReadyProbe(patternSource) {
         if (rect.width <= 0 || rect.height <= 0) continue;
         const section = el.closest("section");
         if (!section) return true;
-        if (section.querySelector('[class*="animate-pulse"]')) continue;
+        if (section.querySelector('[class*="animate-pulse"]')) {
+          const parked = [...document.querySelectorAll('[hidden], [data-rsa-revealed="1"]')].some((host) => {
+            if (host.closest("template") || section.contains(host)) return false;
+            const first = host.querySelector('h1, h2, h3, h4, [role="heading"]');
+            const text = (first && first.textContent || "").trim();
+            return !!first && text.length <= 80 && re.test(text) && !!host.querySelector("a[href]");
+          });
+          if (!parked) continue;
+        }
         return true;
       }
       return false;
@@ -182,6 +203,48 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 					style.opacity !== '0' &&
 					el.getAttribute('aria-hidden') !== 'true';
 			};
+			// A revealed streamed placeholder is position:fixed, so its cards can
+			// sit outside the viewport until openTarget scrolls them. hasLayout is
+			// enough there; every other node still has to intersect the viewport.
+			const canScan = (el) => isVisible(el) ||
+				(Boolean(el?.closest?.('[data-rsa-revealed="1"]')) && hasLayout(el));
+			const parkedHostsFor = (pattern) => {
+				const hosts = Array.from(document.querySelectorAll('[hidden], [data-rsa-revealed="1"]'));
+				const matched = [];
+				for (const host of hosts) {
+					if (host.closest?.('template')) continue;
+					if (matched.some((other) => other.contains(host))) continue;
+					const first = host.querySelector('h1, h2, h3, h4, [role="heading"]');
+					const text = normalize(first?.textContent || '');
+					pattern.lastIndex = 0;
+					if (!first || text.length > 80 || !pattern.test(text) || !host.querySelector('a[href]')) continue;
+					matched.push(host);
+				}
+				return matched.filter((host) => !matched.some((other) => other !== host && other.contains(host)));
+			};
+			const revealParkedHost = (host) => {
+				host.hidden = false;
+				host.setAttribute('data-rsa-revealed', '1');
+				if (host.getAttribute('aria-hidden') === 'true') host.removeAttribute('aria-hidden');
+				host.style.setProperty('display', 'block', 'important');
+				host.style.setProperty('visibility', 'visible', 'important');
+				host.style.setProperty('position', 'fixed', 'important');
+				host.style.setProperty('z-index', '2147483646', 'important');
+				host.style.setProperty('left', '8px', 'important');
+				host.style.setProperty('top', '8px', 'important');
+				host.style.setProperty('width', 'min(960px, calc(100vw - 16px))', 'important');
+				host.style.setProperty('max-height', '70vh', 'important');
+				host.style.setProperty('overflow', 'auto', 'important');
+				host.style.setProperty('opacity', '1', 'important');
+				host.style.setProperty('background', '#fff', 'important');
+			};
+			const restoreParkedHost = (host) => {
+				if (host.getAttribute('data-rsa-revealed') !== '1') return;
+				host.removeAttribute('data-rsa-revealed');
+				host.hidden = true;
+				host.style.cssText = '';
+			};
+			const activityNodeSelector = 'a[href], button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"]), article, li, [data-testid], [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"]';
 			const interactiveSelector = 'a[href], button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])';
 			// Rewards cards are responsive.  On a narrow window, at non-100% zoom,
 			// or in a two-column layout, a perfectly valid card can span almost the
@@ -205,7 +268,7 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				].filter(Boolean);
 				const scored = candidates
 					.filter((target, index, list) => list.indexOf(target) === index)
-					.filter((target) => isVisible(target))
+					.filter((target) => canScan(target))
 					.map((target) => {
 						const rect = target.getBoundingClientRect();
 						const text = textOf(target);
@@ -239,14 +302,20 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 				const candidates = [];
 				let current = node;
 				for (let i = 0; current && current !== document.body && i < 12; i++) {
-					if (isVisible(current)) {
+					if (canScan(current)) {
 						const rect = current.getBoundingClientRect();
 						const text = textOf(current);
 						const className = String(current.className || '');
 						const testId = String(current.getAttribute?.('data-testid') || '');
 						const looksLikeCard = /card|tile|offer|activity|${cardKeyword}|mee|ctrl|pointer|group/i.test(className + ' ' + testId);
 						const tagName = String(current.tagName || '').toLowerCase();
+						// The streamed placeholder is one box around every parked
+						// offer. Treating it as a card glues "Completed" from one
+						// anchor onto the pending one and skips the whole grid.
+						const multiOffer = (current.querySelectorAll?.('a[href]')?.length || 0) > 1;
 						const broadContainer = /^(main|section|footer|header|nav)$/i.test(tagName) ||
+							current.getAttribute?.('data-rsa-revealed') === '1' ||
+							multiOffer ||
 							(rect.width >= Math.max((window.innerWidth || 0) - 2, 1) && rect.height > Math.max((window.innerHeight || 0) * 0.72, 420));
 						if (isCardSized(rect) && !broadContainer && text.length >= 8 && text.length <= ${maxCardTextLength} && (looksLikeCard || current.querySelector?.(interactiveSelector))) {
 							candidates.push(current);
@@ -337,9 +406,16 @@ function activityDomHelpers(cardKeyword, maxCardTextLength) {
 			const openTarget = (target, type, text) => {
 				lastOpenSkip = '';
 				if (clicked.length >= safetyLimit) return false;
-				if (!target || !isVisible(target)) {
+				if (!target || !canScan(target)) {
 					lastOpenSkip = 'target not visible';
 					return false;
+				}
+				if (!isVisible(target)) {
+					try { target.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }); } catch (error) {}
+					if (!isVisible(target)) {
+						lastOpenSkip = 'target not visible';
+						return false;
+					}
 				}
 				const key = keyFor(target, type, text);
 				// Already-handled cards are the normal steady state, not a failure:
@@ -525,18 +601,37 @@ ${activityDomHelpers("daily", 520)}
 			const skipPattern = /learn more|privacy|terms|download app|not eligible|tìm hiểu thêm|giới thiệu|bảo mật|điều khoản|tải ứng dụng|search:\\s*\\d|activity:\\s*\\d|check.?in:\\s*\\d/i;
 			const expandPattern = /earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng/i;
 
-			const nodes = Array.from(mainRoot.querySelectorAll(
-				'a[href], button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"]), article, li, [data-testid], [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"]'
-			));
+			// A pulsing visible grid is only the Suspense shell. The real cards are
+			// already in a hidden placeholder (its id is not stable) whose heading
+			// matches Daily set. Reveal that host so this pass can target them. A
+			// pulse-only page with no parked anchors still retries below. A host
+			// left open by the previous evaluate is the press-point refresh: it
+			// sits outside <main> and its own section no longer pulses.
+			let parkedHosts = [];
+			const pulsingSection = (sectionIsExclusive && dailySection) ||
+				dailyHeading?.el?.closest?.('section') ||
+				null;
+			if (pulsingSection?.querySelector?.('[class*="animate-pulse"], [aria-busy="true"]')) {
+				parkedHosts = parkedHostsFor(dailySetPattern).filter((host) => !pulsingSection.contains(host));
+				parkedHosts.forEach(revealParkedHost);
+			}
+			if (parkedHosts.length === 0) {
+				parkedHosts = parkedHostsFor(dailySetPattern).filter((host) => host.getAttribute('data-rsa-revealed') === '1');
+			}
+			const nodes = Array.from(mainRoot.querySelectorAll(activityNodeSelector));
+			for (const host of parkedHosts) {
+				if (!mainRoot.contains(host)) nodes.push(...host.querySelectorAll(activityNodeSelector));
+			}
+			const inRevealedHost = (el) => Boolean(el?.closest?.('[data-rsa-revealed="1"]'));
 			for (const node of nodes) {
 				if (clicked.length >= safetyLimit) break;
-				if (!isVisible(node)) continue;
+				if (!canScan(node)) continue;
 
 				const card = nearestCard(node);
 				const target = actionTargetFor(node);
-				if (!target || !isVisible(target)) continue;
+				if (!target || !canScan(target)) continue;
 				if (isPageChrome(node) || isPageChrome(card) || isPageChrome(target)) continue;
-				if (!isInsideDailySet(card)) continue;
+				if (!isInsideDailySet(card) && !inRevealedHost(card)) continue;
 
 				const text = textOf(card) || textOf(target);
 				if (!text || text.length < 3) continue;
@@ -584,6 +679,20 @@ ${activityDomHelpers("daily", 520)}
 			// fully on screen reports zero and, without a scroll, never gets
 			// another look — the Daily set silently never gets clicked.
 			if (clicked.length === 0) {
+				// The parked grid was the card source. Do not report "still loading"
+				// or scroll the empty shell; the cards were already classified.
+				// Restore the placeholder when nothing opened so a duplicate overlay
+				// is not left on the page. A press leaves it open for the refresh.
+				if (parkedHosts.length > 0) {
+					parkedHosts.forEach(restoreParkedHost);
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						url: location.href
+					};
+				}
 				const loadingRoot = unboundedDailySet ?
 					mainRoot :
 					((sectionIsExclusive && dailySection) ?
@@ -806,18 +915,37 @@ ${activityDomHelpers("earn", 560)}
 			const fallbackCandidates = [];
 			const rewardPointsPattern = /(?:^|[^\\d])\\+\\s*[1-9]\\d*(?:\\s*(?:points?|pts?|điểm|đ))?(?![a-zA-Z0-9_])|(?:^|[^\\d])(?:[1-9]\\d*)\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
 			const zeroPointsPattern = /(?:^|[^\\d])(?:\\+\\s*)?0\\s*(?:points?|pts?|điểm|đ)(?![a-zA-Z0-9_])/i;
-			const nodes = Array.from(mainRoot.querySelectorAll(
-				'a[href], button, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"]), article, li, [data-testid], [class*="card"], [class*="Card"], [class*="tile"], [class*="Tile"]'
-			));
+			// Same parked-placeholder rule as Daily set. Only the Keep earning
+			// heading is revealed: a Quests host matches the broader heading
+			// pattern and must stay out of this pass.
+			let parkedHosts = [];
+			const pulsingSection = (sectionIsExclusive && keepSection) ||
+				keepHeading?.el?.closest?.('section') ||
+				null;
+			if (
+				pulsingSection?.querySelector?.('[class*="animate-pulse"], [aria-busy="true"]') &&
+				primaryKeepHeadingPattern.test(keepHeading?.text || '')
+			) {
+				parkedHosts = parkedHostsFor(primaryKeepHeadingPattern).filter((host) => !pulsingSection.contains(host));
+				parkedHosts.forEach(revealParkedHost);
+			}
+			if (parkedHosts.length === 0) {
+				parkedHosts = parkedHostsFor(primaryKeepHeadingPattern).filter((host) => host.getAttribute('data-rsa-revealed') === '1');
+			}
+			const nodes = Array.from(mainRoot.querySelectorAll(activityNodeSelector));
+			for (const host of parkedHosts) {
+				if (!mainRoot.contains(host)) nodes.push(...host.querySelectorAll(activityNodeSelector));
+			}
+			const inRevealedHost = (el) => Boolean(el?.closest?.('[data-rsa-revealed="1"]'));
 			for (const node of nodes) {
 				if (clicked.length >= safetyLimit) break;
-				if (!isVisible(node)) continue;
+				if (!canScan(node)) continue;
 
 				const card = nearestCard(node);
 				const target = actionTargetFor(node);
-				if (!target || !isVisible(target)) continue;
+				if (!target || !canScan(target)) continue;
 				if (isPageChrome(node) || isPageChrome(card) || isPageChrome(target)) continue;
-				if (!isInsideEarnArea(card)) continue;
+				if (!isInsideEarnArea(card) && !inRevealedHost(card)) continue;
 
 				const text = textOf(card) || textOf(target);
 				if (!text || text.length < 3 || text.length > 520) continue;
@@ -830,8 +958,14 @@ ${activityDomHelpers("earn", 560)}
 					skipped.push({ type, text: text.slice(0, 90), reason: skipReason });
 					continue;
 				}
-				if (nonCardPattern.test(text)) {
+				if (nonCardPattern.test(text) || href.includes('/redeem')) {
 					skipped.push({ type, text: text.slice(0, 90), reason: 'not an earn-points card' });
+					continue;
+				}
+				// The revealed placeholder also contains the section heading and
+				// its "45/45" progress control. That is not an offer; opening it
+				// spends the only click of the pass.
+				if (/^(keep earning|more activities|more points|earn more|quests?|daily set|kiếm thêm|hoạt động khác|tiếp tục kiếm|thêm hoạt động)(?:\\s*[\\d.,]+\\s*\\/\\s*[\\d.,]+)?$/i.test(text)) {
 					continue;
 				}
 				// Badge wins when the card has one: it is the authoritative reward
@@ -866,6 +1000,20 @@ ${activityDomHelpers("earn", 560)}
 			}
 
 			if (clicked.length === 0) {
+				if (parkedHosts.length > 0) {
+					fallbackCandidates.sort((a, b) => b.score - a.score);
+					for (const candidate of fallbackCandidates) {
+						if (openTarget(candidate.target, candidate.type, candidate.text)) break;
+					}
+					if (clicked.length === 0) parkedHosts.forEach(restoreParkedHost);
+					return {
+						clicked,
+						skipped,
+						openedKeys,
+						pressPoint,
+						url: location.href
+					};
+				}
 				const loadingRoot = unboundedEarn ?
 					mainRoot :
 					((sectionIsExclusive && keepSection) ?

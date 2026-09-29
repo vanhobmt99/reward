@@ -11,6 +11,7 @@ const {
   createSolveActivityScript,
   createClaimReadyScript,
   createRewardsSectionReadyProbe,
+  createDailySetStateProbe,
 } = loadEsmModule("../js/injected-scripts.js");
 
 const DAILY_SET_HEADING_PATTERN =
@@ -492,8 +493,9 @@ describe("createDashboardActivityScript", () => {
   });
 
   // Saved dashboard HTML (2026-08-20): visible #dailyset is three pulse
-  // skeletons; the real Trip-to-Santorini cards sit in <div hidden id="S:5">.
-  test("retries instead of going idle while Daily set cards are still skeletons", () => {
+  // skeletons; the real Trip-to-Santorini card sits in a body-level hidden
+  // placeholder. The id is not part of the contract.
+  test("clicks a parked Daily set card while the visible grid is still pulsing", () => {
     document.body.innerHTML = `
       <main>
         <section id="dailyset">
@@ -505,19 +507,129 @@ describe("createDashboardActivityScript", () => {
             <div class="animate-pulse h-31.5 w-full rounded-cornerCardDefault"></div>
           </div>
         </section>
-        <div hidden id="S:5">
-          <section id="dailyset">
-            <h2>Daily set</h2>
-            <a href="https://www.bing.com/search?q=Trip+to+Santorini&FORM=tgrew4">
-              <p>Santorini Aegean summer glow</p>
-              <div class="bg-statusSuccessRewardsBg"><p>10</p></div>
-            </a>
-          </section>
-        </div>
-      </main>`;
-    const [visibleSection] = document.querySelectorAll("#dailyset");
+      </main>
+      <div hidden id="S:5">
+        <section>
+          <h2>Daily set</h2>
+          <a href="https://www.bing.com/search?q=Trip+to+Santorini&FORM=tgrew4">
+            <p>Santorini Aegean summer glow</p>
+            <div class="bg-statusSuccessRewardsBg"><p>10</p></div>
+          </a>
+        </section>
+      </div>`;
+    const visibleSection = document.querySelector("main #dailyset");
     const heading = visibleSection.querySelector("h2");
+    const card = document.querySelector("#S\\:5 a");
     visibleSection.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      bottom: 280,
+      left: 0,
+      right: 600,
+    });
+    heading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
+    });
+    card.getBoundingClientRect = () => ({
+      width: 320,
+      height: 140,
+      top: 70,
+      bottom: 210,
+      left: 20,
+      right: 340,
+    });
+    card.scrollIntoView = () => {};
+    card.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => card);
+
+    const result = new Function(
+      "return (" + createDashboardActivityScript([], 1) + ")",
+    )();
+
+    expect(result.reason).not.toBe("daily set cards still loading");
+    expect(result.clicked).toHaveLength(1);
+    expect(result.clicked[0].text).toMatch(/Santorini/);
+    expect(card.click).toHaveBeenCalled();
+    expect(document.querySelector("#S\\:5").getAttribute("data-rsa-revealed")).toBe("1");
+  });
+
+  test("returns a press point for a parked Daily set card and can re-pick it", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>
+      <div hidden id="S:5">
+        <h2>Daily set</h2>
+        <a href="https://www.bing.com/search?q=Trip+to+Santorini&FORM=tgrew4">
+          <p>Santorini Aegean summer glow</p>
+          <div class="bg-statusSuccessRewardsBg"><p>10</p></div>
+        </a>
+      </div>`;
+    const visibleSection = document.querySelector("main #dailyset");
+    const heading = visibleSection.querySelector("h2");
+    const card = document.querySelector("#S\\:5 a");
+    visibleSection.getBoundingClientRect = () => ({
+      width: 600,
+      height: 280,
+      top: 0,
+      bottom: 280,
+      left: 0,
+      right: 600,
+    });
+    heading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
+    });
+    card.getBoundingClientRect = () => ({
+      width: 320,
+      height: 140,
+      top: 70,
+      bottom: 210,
+      left: 20,
+      right: 340,
+    });
+    card.scrollIntoView = () => {};
+    card.click = jest.fn();
+    document.elementFromPoint = jest.fn(() => card);
+
+    const first = new Function(
+      "return (" + createDashboardActivityScript([], 1, true) + ")",
+    )();
+    const second = new Function(
+      "return (" + createDashboardActivityScript([], 1, true) + ")",
+    )();
+
+    expect(first.clicked).toHaveLength(1);
+    expect(first.pressPoint).toEqual({ x: 180, y: 140 });
+    expect(first.openedKeys[0]).toBe(second.openedKeys[0]);
+    expect(second.pressPoint).toEqual({ x: 180, y: 140 });
+    expect(card.click).not.toHaveBeenCalled();
+  });
+
+  test("retries while Daily set is pulse-only and nothing is parked", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>`;
+    const section = document.querySelector("#dailyset");
+    const heading = document.querySelector("h2");
+    section.getBoundingClientRect = () => ({
       width: 600,
       height: 280,
       top: 0,
@@ -713,7 +825,7 @@ describe("createDashboardActivityScript", () => {
 });
 
 describe("createRewardsSectionReadyProbe", () => {
-  test("ignores the hidden streamed Daily set copy while the visible grid is pulsing", () => {
+  test("is ready while Daily set is pulsing once a parked copy already has anchors", () => {
     document.body.innerHTML = `
       <main>
         <section id="dailyset">
@@ -729,6 +841,30 @@ describe("createRewardsSectionReadyProbe", () => {
       </main>`;
     const visibleHeading = document.querySelector("main > section h2");
     visibleHeading.getBoundingClientRect = () => ({
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
+    });
+
+    const ready = new Function(
+      "return " + createRewardsSectionReadyProbe(DAILY_SET_HEADING_PATTERN),
+    )();
+
+    expect(ready).toBe(true);
+  });
+
+  test("stays not ready while Daily set is pulsing and nothing is parked", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse h-31.5 w-full"></div>
+        </section>
+      </main>`;
+    document.querySelector("h2").getBoundingClientRect = () => ({
       width: 200,
       height: 30,
       top: 10,
@@ -772,6 +908,121 @@ describe("createRewardsSectionReadyProbe", () => {
     assertCompiles(
       createRewardsSectionReadyProbe(KEEP_EARNING_HEADING_PATTERN),
     );
+  });
+});
+
+describe("createDailySetStateProbe", () => {
+  const box = {
+    width: 200,
+    height: 40,
+    top: 10,
+    bottom: 50,
+    left: 0,
+    right: 200,
+  };
+  let originalRect;
+
+  beforeEach(() => {
+    originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = () => box;
+  });
+
+  afterEach(() => {
+    HTMLElement.prototype.getBoundingClientRect = originalRect;
+  });
+
+  function probe() {
+    return new Function("return " + createDailySetStateProbe())();
+  }
+
+  test("reads a full parked Daily set while the visible grid is still pulsing", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>
+      <div hidden>
+        <h2>Daily set</h2>
+        <a href="https://www.bing.com/search?q=a">10 Completed</a>
+        <a href="https://www.bing.com/search?q=b">10 Completed</a>
+        <a href="https://www.bing.com/search?q=c">+10 Sydney quiz</a>
+      </div>`;
+
+    expect(probe()).toMatchObject({ status: "pending", done: 2, total: 3 });
+  });
+
+  test("marks a full parked Daily set complete when every card is completed", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>
+      <div hidden>
+        <h2>Daily set</h2>
+        <a href="https://www.bing.com/search?q=a">10 Completed</a>
+        <a href="https://www.bing.com/search?q=b">10 Completed</a>
+        <a href="https://www.bing.com/search?q=c">10 Completed</a>
+      </div>`;
+
+    expect(probe()).toMatchObject({ status: "complete", done: 3, total: 3 });
+  });
+
+  test("counts a parked Daily set complete when the badge is glued to Completed", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>
+      <div hidden>
+        <h2>Daily set</h2>
+        <a href="https://www.bing.com/search?q=a">shows you won't want to miss.10Completed</a>
+        <a href="https://www.bing.com/search?q=b">ancient wonders.10Completed</a>
+        <a href="https://www.bing.com/search?q=c">engaging challenge.10Completed</a>
+      </div>`;
+
+    expect(probe()).toMatchObject({ status: "complete", done: 3, total: 3 });
+  });
+
+  test("stays loading when the parked copy has fewer than three cards", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>
+      <div hidden>
+        <h2>Daily set</h2>
+        <a href="https://www.bing.com/search?q=old">10 Completed</a>
+      </div>`;
+
+    expect(probe()).toMatchObject({ status: "loading" });
+  });
+
+  test("prefers a hydrated visible grid over a stale parked copy", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="dailyset">
+          <h2>Daily set</h2>
+          <a href="https://www.bing.com/search?q=a">10 Completed</a>
+          <a href="https://www.bing.com/search?q=b">+10 Sydney</a>
+          <a href="https://www.bing.com/search?q=c">+10 Quiz</a>
+        </section>
+      </main>
+      <div hidden>
+        <h2>Daily set</h2>
+        <a href="https://www.bing.com/search?q=x">10 Completed</a>
+        <a href="https://www.bing.com/search?q=y">10 Completed</a>
+        <a href="https://www.bing.com/search?q=z">10 Completed</a>
+      </div>`;
+
+    expect(probe()).toMatchObject({ status: "pending", done: 1, total: 3 });
   });
 });
 
@@ -934,6 +1185,89 @@ describe("createEarnActivityScript", () => {
     expect(result.retry).toBe(true);
     expect(result.reason).toBe("keep earning cards still loading");
     expect(result.clicked).toHaveLength(0);
+  });
+
+  test("scans a parked Keep earning grid and leaves quests, completed cards, and redeems alone", () => {
+    document.body.innerHTML = `
+      <main>
+        <section id="quests">
+          <h2>Quests</h2>
+          <div class="animate-pulse"></div>
+        </section>
+        <section id="moreactivities">
+          <h2>Keep earning</h2>
+          <div class="animate-pulse"></div>
+        </section>
+      </main>
+      <div hidden id="S:6">
+        <h2>Quests</h2>
+        <a id="quest" href="https://rewards.bing.com/earn/quest/app">Rewards App weekly Exclusive Quest 1/8 tasks</a>
+      </div>
+      <div hidden id="S:7">
+        <h2>Keep earning</h2>
+        <a id="done" href="https://www.bing.com/search?q=bird">Large powerful bird 15 Completed</a>
+        <a id="redeem" href="https://rewards.bing.com/redeem/sku/000499012006">Claim Sea of Thieves</a>
+        <a id="open" href="https://www.bing.com/search?q=gardens">Virtual gardens +15</a>
+      </div>`;
+    const box = (el, top) => {
+      el.getBoundingClientRect = () => ({
+        width: 320,
+        height: 80,
+        top,
+        bottom: top + 80,
+        left: 20,
+        right: 340,
+      });
+      el.scrollIntoView = () => {};
+      el.click = jest.fn();
+    };
+    document.querySelector("#quests").getBoundingClientRect = () => ({
+      width: 600, height: 120, top: 0, bottom: 120, left: 0, right: 600,
+    });
+    document.querySelector("#moreactivities").getBoundingClientRect = () => ({
+      width: 600, height: 120, top: 140, bottom: 260, left: 0, right: 600,
+    });
+    document.querySelector("#quests h2").getBoundingClientRect = () => ({
+      width: 200, height: 30, top: 10, bottom: 40, left: 0, right: 200,
+    });
+    document.querySelector("#moreactivities h2").getBoundingClientRect = () => ({
+      width: 200, height: 30, top: 150, bottom: 180, left: 0, right: 200,
+    });
+    box(document.querySelector("#quest"), 20);
+    box(document.querySelector("#done"), 60);
+    box(document.querySelector("#redeem"), 160);
+    box(document.querySelector("#open"), 260);
+    // Real Chromium gives the unhidden placeholder a large box. Without
+    // excluding that grid, every anchor inherits the sibling "Completed".
+    document.querySelector("#S\\:7").getBoundingClientRect = () => ({
+      width: 960,
+      height: 320,
+      top: 8,
+      bottom: 328,
+      left: 8,
+      right: 968,
+    });
+    document.elementFromPoint = jest.fn((x, y) =>
+      [...document.querySelectorAll("a")].find((el) => {
+        const rect = el.getBoundingClientRect();
+        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+      }) || null,
+    );
+
+    const result = new Function(
+      "return (" + createEarnActivityScript([], 1, true) + ")",
+    )();
+
+    expect(result.reason).not.toBe("keep earning cards still loading");
+    expect(result.openedKeys).toEqual(["https://www.bing.com/search?q=gardens"]);
+    expect(result.pressPoint).toEqual({ x: 180, y: 300 });
+    expect(result.skipped.map((item) => item.reason)).toEqual(
+      expect.arrayContaining(["already completed", "not an earn-points card"]),
+    );
+    expect(result.clicked.some((item) => /quest/i.test(item.text))).toBe(false);
+    expect(document.querySelector("#quest").target).not.toBe("_blank");
+    expect(document.querySelector("#done").click).not.toHaveBeenCalled();
+    expect(document.querySelector("#redeem").click).not.toHaveBeenCalled();
   });
 
   test("clicks a Keep earning card that is In progress despite day-check icons", () => {

@@ -3876,10 +3876,10 @@ async function waitForRewardsSection(tabId, patternSource, timeoutMs = 15000) {
     shortestDelay * 3,
   ).catch(() => null);
   // The section shell (its <h2> included) streams in well before the cards do:
-  // the card grid renders as Suspense skeletons carrying `animate-pulse`.
-  // Matching the heading alone therefore reports "ready" against an empty
-  // section, which is exactly the first-pass click miss this wait exists to
-  // prevent. Require the heading's section to be past its skeleton state too.
+  // the visible grid stays on `animate-pulse` skeletons while the real anchors
+  // sit in a hidden placeholder. A pulsing section is ready once that
+  // placeholder already has links. A pulse-only shell, with no parked anchors,
+  // is not — matching the heading alone was the first-pass click miss.
   const probe = createRewardsSectionReadyProbe(patternSource);
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
