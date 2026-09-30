@@ -78,11 +78,14 @@ module.exports = [
 
   // Config files run in Node/CommonJS.
   {
-    files: ["eslint.config.js"],
+    files: ["eslint.config.js", "scripts/**/*.cjs"],
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: "commonjs",
       globals: { ...globals.node },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { args: "none", ignoreRestSiblings: true }],
     },
   },
 

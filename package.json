@@ -3,17 +3,21 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "build:firefox": "node scripts/build-firefox.cjs",
+    "test:firefox": "node scripts/test-firefox.cjs",
+    "package:firefox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-firefox.ps1",
     "pretest": "node tests/check_syntax.js",
     "test": "jest --verbose",
     "test:claim": "playwright test --config=playwright.config.mjs",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "lint": "eslint js tests eslint.config.js",
-    "lint:fix": "eslint js tests eslint.config.js --fix",
-    "format": "prettier --write \"**/*.{js,json,md,html,css}\"",
-    "format:check": "prettier --check \"**/*.{js,json,md,html,css}\""
+    "lint": "eslint js tests scripts eslint.config.js",
+    "lint:fix": "eslint js tests scripts eslint.config.js --fix",
+    "format": "prettier --write \"**/*.{js,cjs,json,md,html,css}\"",
+    "format:check": "prettier --check \"**/*.{js,cjs,json,md,html,css}\""
   },
   "devDependencies": {
+    "acorn": "^8.18.0",
     "@playwright/test": "^1.63.0",
     "eslint": "^9.39.4",
     "eslint-config-prettier": "^9.1.2",

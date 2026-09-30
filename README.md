@@ -1,5 +1,7 @@
 # Search Auto
 
+Bản Firefox: xem [hướng dẫn dựng và cài](docs/firefox.md). Chạy `npm.cmd run package:firefox` để tạo thư mục `dist/firefox` và gói ZIP riêng cho Firefox.
+
 Search Auto là tiện ích Chrome hỗ trợ tìm kiếm Bing và làm nhiệm vụ Microsoft Rewards hằng ngày.
 
 ## Ủng hộ

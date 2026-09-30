@@ -1512,6 +1512,7 @@ let fingerprintSourcePromise = null;
 const fingerprintPatchedTabs = new Set();
 
 async function installFingerprintPatch(tabId) {
+  if (chrome.debugger.supportsFingerprintPatch === false) return true;
   tabId = Number(tabId);
   if (!tabId || fingerprintPatchedTabs.has(tabId)) return true;
   try {

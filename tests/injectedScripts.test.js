@@ -556,7 +556,9 @@ describe("createDashboardActivityScript", () => {
     expect(result.clicked).toHaveLength(1);
     expect(result.clicked[0].text).toMatch(/Santorini/);
     expect(card.click).toHaveBeenCalled();
-    expect(document.querySelector("#S\\:5").getAttribute("data-rsa-revealed")).toBe("1");
+    expect(
+      document.querySelector("#S\\:5").getAttribute("data-rsa-revealed"),
+    ).toBe("1");
   });
 
   test("returns a press point for a parked Daily set card and can re-pick it", () => {
@@ -1222,17 +1224,38 @@ describe("createEarnActivityScript", () => {
       el.click = jest.fn();
     };
     document.querySelector("#quests").getBoundingClientRect = () => ({
-      width: 600, height: 120, top: 0, bottom: 120, left: 0, right: 600,
+      width: 600,
+      height: 120,
+      top: 0,
+      bottom: 120,
+      left: 0,
+      right: 600,
     });
     document.querySelector("#moreactivities").getBoundingClientRect = () => ({
-      width: 600, height: 120, top: 140, bottom: 260, left: 0, right: 600,
+      width: 600,
+      height: 120,
+      top: 140,
+      bottom: 260,
+      left: 0,
+      right: 600,
     });
     document.querySelector("#quests h2").getBoundingClientRect = () => ({
-      width: 200, height: 30, top: 10, bottom: 40, left: 0, right: 200,
+      width: 200,
+      height: 30,
+      top: 10,
+      bottom: 40,
+      left: 0,
+      right: 200,
     });
-    document.querySelector("#moreactivities h2").getBoundingClientRect = () => ({
-      width: 200, height: 30, top: 150, bottom: 180, left: 0, right: 200,
-    });
+    document.querySelector("#moreactivities h2").getBoundingClientRect =
+      () => ({
+        width: 200,
+        height: 30,
+        top: 150,
+        bottom: 180,
+        left: 0,
+        right: 200,
+      });
     box(document.querySelector("#quest"), 20);
     box(document.querySelector("#done"), 60);
     box(document.querySelector("#redeem"), 160);
@@ -1247,11 +1270,17 @@ describe("createEarnActivityScript", () => {
       left: 8,
       right: 968,
     });
-    document.elementFromPoint = jest.fn((x, y) =>
-      [...document.querySelectorAll("a")].find((el) => {
-        const rect = el.getBoundingClientRect();
-        return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
-      }) || null,
+    document.elementFromPoint = jest.fn(
+      (x, y) =>
+        [...document.querySelectorAll("a")].find((el) => {
+          const rect = el.getBoundingClientRect();
+          return (
+            x >= rect.left &&
+            x <= rect.right &&
+            y >= rect.top &&
+            y <= rect.bottom
+          );
+        }) || null,
     );
 
     const result = new Function(
@@ -1259,7 +1288,9 @@ describe("createEarnActivityScript", () => {
     )();
 
     expect(result.reason).not.toBe("keep earning cards still loading");
-    expect(result.openedKeys).toEqual(["https://www.bing.com/search?q=gardens"]);
+    expect(result.openedKeys).toEqual([
+      "https://www.bing.com/search?q=gardens",
+    ]);
     expect(result.pressPoint).toEqual({ x: 180, y: 300 });
     expect(result.skipped.map((item) => item.reason)).toEqual(
       expect.arrayContaining(["already completed", "not an earn-points card"]),

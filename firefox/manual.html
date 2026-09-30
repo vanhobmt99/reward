@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <title>Search Auto — Firefox</title>
+    <style>
+      body {
+        max-width: 760px;
+        margin: 32px auto;
+        padding: 0 20px;
+        font:
+          16px/1.6 system-ui,
+          sans-serif;
+      }
+      h1,
+      h2 {
+        line-height: 1.3;
+      }
+      code {
+        background: #eee;
+        padding: 2px 5px;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Search Auto cho Firefox</h1>
+    <p>
+      Đăng nhập Microsoft trên Bing và Rewards trong cùng hồ sơ Firefox trước
+      khi chạy.
+    </p>
+    <h2>Chạy tìm kiếm và nhiệm vụ</h2>
+    <ol>
+      <li>
+        Trong popup, nhập số lượt Máy tính và Điện thoại, hoặc chọn một mẫu có
+        sẵn.
+      </li>
+      <li>Bấm <b>Làm nhiệm vụ</b>. Xem tiến độ và bấm <b>Dừng</b> khi cần.</li>
+      <li>
+        Trong <b>Nâng cao</b>, chỉnh khoảng chờ, chủ đề và tùy chọn tự làm nhiệm
+        vụ sau tìm kiếm. Có thể chọn <b>Chỉ làm nhiệm vụ</b> để chạy riêng
+        Rewards.
+      </li>
+    </ol>
+    <h2>Lịch tự động</h2>
+    <p>
+      Chọn chế độ trong Lịch tự động và bấm Đặt lịch. Hỗ trợ chạy khi mở trình
+      duyệt, theo chu kỳ hoặc hàng ngày vào giờ đã chọn. Firefox phải đang mở;
+      lịch hàng ngày bị bỏ lỡ sẽ đợi ngày hôm sau.
+    </p>
+    <h2>Giới hạn của Firefox</h2>
+    <p>
+      Firefox không có API chrome.debugger. Bản này dùng script và sự kiện DOM
+      để nhập và bấm. Sự kiện không có isTrusted như thao tác thật; nhiệm vụ từ
+      chối sự kiện này phải làm thủ công.
+    </p>
+    <p>
+      Pha Điện thoại chỉ thay User-Agent HTTP trên tab Bing do extension điều
+      khiển. Không giả lập viewport, cảm ứng, navigator, Client Hints, GPU hay
+      bỏ qua service worker như Chrome. Không thể bảo đảm Bing ghi nhận điểm
+      Mobile.
+    </p>
+    <p>
+      Dọn dữ liệu chỉ áp dụng loại dữ liệu Firefox hỗ trợ theo hostname Bing:
+      cookie, local storage và service worker. Không xóa cache toàn trình duyệt.
+      Sao lưu đăng nhập vẫn dùng API cookie của Firefox.
+    </p>
+    <h2>Nhật ký và đặt lại</h2>
+    <p>
+      Dùng Tải lịch sử tìm kiếm, Tải log lỗi trong Nâng cao. Khi bị treo, chọn
+      Đặt lại dữ liệu chạy. Các nút xóa dữ liệu cần bấm hai lần để xác nhận. Xóa
+      URL lịch sử sẽ xóa mọi lượt truy cập URL đó, kể cả lượt cũ.
+    </p>
+    <p>
+      Để xem log nền: mở <code>about:debugging#/runtime/this-firefox</code>, tìm
+      Search Auto và bấm <b>Inspect</b>.
+    </p>
+    <h2>Cài đặt bản phát triển</h2>
+    <p>
+      Chạy <code>npm.cmd run build:firefox</code>, mở trang about:debugging ở
+      trên, chọn <b>Load Temporary Add-on…</b> rồi chọn
+      <code>dist/firefox/manifest.json</code>. Cài tạm sẽ bị gỡ khi Firefox
+      đóng. Bản cài lâu dài cần được Mozilla ký.
+    </p>
+  </body>
+</html>

@@ -6,3 +6,4 @@ js/queries.js
 js/queries_extra.js
 logo/
 *.zip
+dist/
