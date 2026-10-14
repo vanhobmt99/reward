@@ -23,9 +23,9 @@ function loadQueriesExtra() {
   return new Function(`${normalized}; return queriesExtra;`)();
 }
 
-function loadPopupNicheOptions() {
+function loadOptionsNicheOptions() {
   const html = fs.readFileSync(
-    path.resolve(__dirname, "../popup.html"),
+    path.resolve(__dirname, "../options.html"),
     "utf8",
   );
   const selectMatch = html.match(
@@ -37,27 +37,27 @@ function loadPopupNicheOptions() {
   );
 }
 
-describe("popup Search Niche options", () => {
-  test("defaults to the background topic mode", () => {
+describe("options page Search Niche options", () => {
+  test("provides the default background topic mode", () => {
     const html = fs.readFileSync(
-      path.resolve(__dirname, "../popup.html"),
+      path.resolve(__dirname, "../options.html"),
       "utf8",
     );
-    expect(html).toMatch(
-      /<option\s+value="random"\s+selected>Theo chủ đề \(mặc định\)<\/option>/i,
+    const script = fs.readFileSync(
+      path.resolve(__dirname, "../js/options.js"),
+      "utf8",
     );
+    expect(html).toMatch(/<option\s+value="random">/i);
+    expect(script).toMatch(/config\.control\.niche\s*\|\|\s*"random"/);
   });
 
-  test("match runtime query categories", () => {
+  test("matches runtime query categories", () => {
     const runtimeQueries = { ...loadQueries(), ...loadQueriesExtra() };
     const runtimeCategories = Object.keys(runtimeQueries).sort();
-    const popupOptions = loadPopupNicheOptions().sort();
-
-    const concretePopup = popupOptions.filter((option) => option !== "random");
-    const concreteRuntime = runtimeCategories.filter(
-      (category) => category !== "random",
+    const options = loadOptionsNicheOptions().sort();
+    expect(options.filter((option) => option !== "random")).toEqual(
+      runtimeCategories.filter((category) => category !== "random"),
     );
-    expect(concretePopup).toEqual(concreteRuntime);
-    expect(popupOptions).toContain("random");
+    expect(options).toContain("random");
   });
 });

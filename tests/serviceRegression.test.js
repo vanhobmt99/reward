@@ -16,6 +16,18 @@ const popupSource = fs.readFileSync(
   path.join(__dirname, "../js/popup.js"),
   "utf8",
 );
+const popupHtml = fs.readFileSync(
+  path.join(__dirname, "../popup.html"),
+  "utf8",
+);
+const optionsSource = fs.readFileSync(
+  path.join(__dirname, "../js/options.js"),
+  "utf8",
+);
+const optionsHtml = fs.readFileSync(
+  path.join(__dirname, "../options.html"),
+  "utf8",
+);
 const configDefaultsSource = fs.readFileSync(
   path.join(__dirname, "../js/config-defaults.js"),
   "utf8",
@@ -87,11 +99,12 @@ describe("service regressions", () => {
     expect(serviceSource).toContain('await chrome.alarms.clear("schedule");');
   });
 
-  test("popup saves merge into latest config and command responses report real outcomes", () => {
-    expect(popupSource).toContain("async function saveConfigMutation(mutator)");
-    expect(popupSource).toContain(
-      "const updated = await atomicUpdate((stored) => {",
-    );
+  test("quick start uses saved search config and reports command outcomes", () => {
+    expect(popupSource).toContain("action: ACTIONS.START");
+    expect(popupSource).toContain("searches: { ...config.search }");
+    expect(popupSource).toContain("action: ACTIONS.STOP");
+    expect(popupSource).toContain("chrome.storage.onChanged.addListener");
+    expect(popupSource).toContain("await atomicUpdate((stored) => {");
     expect(serviceSource).toContain(
       "const cleared = await clear(false, true);",
     );
@@ -397,40 +410,22 @@ describe("service regressions", () => {
     );
   });
 
-  test("popup stops active runs before runtime or extension reset", () => {
-    expect(popupSource).toContain("async function stopActiveRunIfNeeded()");
-    // Stop is now sent through the timeout wrapper using the shared ACTIONS enum.
-    expect(popupSource).toContain(
-      "sendMessageWithTimeout({ action: ACTIONS.STOP })",
+  test("popup and options expose the approved safe flows", () => {
+    expect(popupHtml).toContain('id="searchTrigger"');
+    expect(popupHtml).toContain('id="runStatus"');
+    expect(popupHtml).toContain('id="progressFill"');
+    expect(popupHtml).toContain('id="openSettings"');
+    expect(popupHtml).not.toContain('id="delete"');
+    expect(popupHtml).not.toContain('id="reset"');
+    expect(optionsHtml).not.toContain('id="delete"');
+    expect(optionsHtml).not.toContain('id="clearCrashLog"');
+    expect(optionsHtml).not.toContain('id="runtime"');
+    expect(optionsSource).toContain(
+      'document.querySelector("#scheduleTrigger")',
     );
-    // Registration markers stop at "$runtime.on(" / "$reset.on(" because the
-    // handlers are wrapped in withConfirm(...) and prettier splits the
-    // .on("click", ...) call across lines. The safety property under test —
-    // both handlers stop an active run before wiping — is unchanged.
-    const runtimeHandler = popupSource.slice(
-      popupSource.indexOf("$runtime.on("),
-      popupSource.indexOf("$reset.on("),
-    );
-    const resetHandler = popupSource.slice(
-      popupSource.indexOf("$reset.on("),
-      popupSource.indexOf("chrome.storage.onChanged.addListener"),
-    );
-    expect(runtimeHandler).toContain("await stopActiveRunIfNeeded();");
-    expect(resetHandler).toContain("await stopActiveRunIfNeeded();");
+    expect(optionsSource).toContain("ACTIONS.SCHEDULE");
+    expect(optionsSource).toContain("config?.runtime?.running");
   });
-
-  test("popup paginates Bing history export and deletion", () => {
-    expect(popupSource).toContain(
-      "async function fetchBingHistoryLast24Hours()",
-    );
-    expect(popupSource).toContain("endTime: lastVisitTime");
-    expect(popupSource).toContain("await fetchBingHistoryLast24Hours()");
-  });
-
-  test("popup shows Stop on schedule trigger while a run is active", () => {
-    expect(popupSource).toContain('$scheduleTrigger.text("Dừng")');
-  });
-
   test("login click reports sign-in initiation instead of logged-in state", () => {
     expect(contentSource).toContain("signInInitiated: true");
     expect(contentSource).not.toContain("loggedIn: true");
@@ -470,35 +465,6 @@ describe("service regressions", () => {
     expect(searchPhasesSource).not.toContain(
       "await activityFn(activityTabId, false);",
     );
-  });
-
-  test("popup waits for worker stop before reset actions", () => {
-    const stopFn = popupSource.slice(
-      popupSource.indexOf("async function stopActiveRunIfNeeded()"),
-      popupSource.indexOf("async function fetchBingHistoryLast24Hours()"),
-    );
-    // Timeout window is a named constant (STOP_WAIT_TIMEOUT_MS = 15000).
-    expect(stopFn).toContain(
-      "const deadline = Date.now() + STOP_WAIT_TIMEOUT_MS",
-    );
-    expect(popupSource).toContain("const STOP_WAIT_TIMEOUT_MS = 15000;");
-    expect(stopFn).toContain("return false");
-    expect(stopFn).not.toContain("setTimeout(resolve, 150)");
-  });
-
-  test("popup aborts runtime reset when stop times out", () => {
-    expect(popupSource).toContain("Stop timed out; runtime not reset");
-    expect(popupSource).toContain("Stop timed out; extension not reset");
-  });
-
-  test("popup paginates history without skipping equal timestamps", () => {
-    expect(popupSource).toContain("const excludedIds = new Set()");
-    expect(popupSource).toContain("excludedIds.add(item.id)");
-  });
-
-  test("popup dedupes paginated Bing history results", () => {
-    expect(popupSource).toContain("function dedupeHistoryEntries(entries)");
-    expect(popupSource).toContain("return dedupeHistoryEntries(allResults);");
   });
 
   test("content script does not load unused utils module", () => {

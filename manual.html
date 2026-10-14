@@ -3,232 +3,150 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Hướng dẫn sử dụng — Kiếm điểm</title>
-    <link rel="shortcut icon" href="/logo/bing.png" type="image/x-icon" />
+    <title>Hướng dẫn sử dụng — Search Auto</title>
     <link rel="stylesheet" href="/css/fonts.css" />
     <style>
       :root {
-        --primary: #0072ff;
-        --text: #14171f;
-        --text-muted: #626b78;
+        color-scheme: light dark;
+        --text: #171a21;
+        --muted: #667085;
         --bg: #fff;
-        --surface: #f0f2f5;
-        --border: #dde1e6;
-        --danger: #d92d20;
+        --surface: #f3f5f8;
+        --border: #e0e4ea;
+        --primary: #1769e0;
       }
       @media (prefers-color-scheme: dark) {
         :root {
-          --primary: #4d94ff;
           --text: #f4f6fa;
-          --text-muted: #98a2b3;
-          --bg: #16181d;
-          --surface: #23262d;
-          --border: #33383f;
-          --danger: #f97066;
+          --muted: #a4adba;
+          --bg: #17191e;
+          --surface: #24272e;
+          --border: #363b45;
+          --primary: #64a0f4;
         }
       }
       * {
         box-sizing: border-box;
-        margin: 0;
-        padding: 0;
       }
       body {
         background: var(--bg);
         color: var(--text);
-        font-family: "Outfit", system-ui, sans-serif;
-        line-height: 1.65;
+        font:
+          16px/1.65 "Outfit",
+          system-ui,
+          sans-serif;
         margin: 0 auto;
-        max-width: 720px;
-        padding: 32px 20px 64px;
+        max-width: 760px;
+        padding: 36px 22px 64px;
       }
       h1 {
-        font-size: 28px;
-        margin-bottom: 4px;
-      }
-      .sub {
-        color: var(--text-muted);
-        margin-bottom: 28px;
+        font-size: 30px;
+        line-height: 1.2;
+        margin: 0 0 8px;
       }
       h2 {
         border-bottom: 1px solid var(--border);
         font-size: 20px;
-        margin: 28px 0 10px;
+        margin: 30px 0 10px;
         padding-bottom: 6px;
       }
       p,
       li {
-        margin-bottom: 6px;
+        color: var(--muted);
+      }
+      b {
+        color: var(--text);
       }
       ul,
       ol {
-        padding-left: 22px;
+        padding-left: 24px;
       }
-      code,
-      kbd {
-        background: var(--surface);
-        border-radius: 4px;
-        font-size: 0.92em;
-        padding: 1px 6px;
+      li {
+        margin: 6px 0;
       }
-      .tip {
+      .sub {
+        color: var(--muted);
+        margin: 0 0 26px;
+      }
+      .callout {
         background: var(--surface);
         border-left: 3px solid var(--primary);
-        border-radius: 4px;
-        margin: 12px 0;
-        padding: 10px 14px;
+        border-radius: 8px;
+        margin: 16px 0;
+        padding: 12px 16px;
       }
-      .warn {
-        background: var(--surface);
-        border-left: 3px solid var(--danger);
-        border-radius: 4px;
-        margin: 12px 0;
-        padding: 10px 14px;
-      }
-      table {
-        border-collapse: collapse;
-        margin: 10px 0;
-        width: 100%;
-      }
-      th,
-      td {
-        border: 1px solid var(--border);
-        padding: 6px 10px;
-        text-align: left;
-      }
-      th {
-        background: var(--surface);
+      a {
+        color: var(--primary);
       }
     </style>
   </head>
   <body>
-    <h1>Kiếm điểm — Hướng dẫn sử dụng</h1>
-    <p class="sub">
-      Rewards Search Automator: tự động tìm kiếm Bing và làm nhiệm vụ Microsoft
-      Rewards.
-    </p>
-
-    <div class="tip">
-      Chạy ổn định trên <b>Google Chrome</b>. Trên <b>Microsoft Edge</b>, tìm
-      kiếm Bing vẫn có thể chạy, nhưng phần tự làm nhiệm vụ có thể bị chặn: Edge
-      không cho extension điều khiển trang Rewards, nên Daily set, Keep earning
-      và Claim không tự bấm được. Tab được giữ mở để làm tay. Tải lại trang
-      không gỡ chặn.
-    </div>
+    <h1>Search Auto</h1>
+    <p class="sub">Hướng dẫn chạy nhanh và tùy chỉnh tiện ích.</p>
 
     <h2>Bắt đầu nhanh</h2>
     <ol>
       <li>
-        Đăng nhập tài khoản Microsoft trên Bing/Rewards trong trình duyệt.
+        Đăng nhập tài khoản Microsoft trên Bing và Rewards trong trình duyệt.
       </li>
       <li>
-        Mở popup extension, chọn số lần tìm <b>Máy tính · Điện thoại</b> (hoặc
-        bấm một nút chọn nhanh, vd <code>31 · 21</code>).
+        Mở popup Search Auto. Popup dùng cấu hình đã lưu gần nhất và hiển thị số
+        lượt máy tính, điện thoại.
       </li>
       <li>
-        Bấm <b>Làm nhiệm vụ</b> — extension tự search rồi tự click các nhiệm vụ
-        kiếm điểm hằng ngày.
+        Nhấn <b>Start</b> để chạy. Khi đang chạy, popup hiển thị giai đoạn, tiến
+        độ và nút <b>Dừng</b>.
       </li>
     </ol>
-    <div class="tip">
-      Khi đang chạy, dòng tiến độ hiển thị <i>Đã làm x/y</i> ngay dưới nút. Muốn
-      dừng giữa chừng: bấm lại nút (<b>Dừng</b>).
+    <div class="callout">
+      Muốn thay số lượt tìm, khoảng nghỉ, chủ đề hoặc hành vi sau khi tìm? Mở
+      <b>Tùy chọn</b> bằng biểu tượng bánh răng. Các thay đổi được lưu tự động.
     </div>
 
-    <h2>Lịch tự động</h2>
-    <p>Mở mục <b>Lịch tự động</b> trong popup và chọn chế độ:</p>
-    <table>
-      <tr>
-        <th>Chế độ</th>
-        <th>Ý nghĩa</th>
-      </tr>
-      <tr>
-        <td>Thủ công</td>
-        <td>Không tự chạy; bấm <b>Đặt lịch</b> sẽ chạy ngay một lần.</td>
-      </tr>
-      <tr>
-        <td>Khi mở trình duyệt</td>
-        <td>Tự chạy một lần mỗi khi mở Chrome.</td>
-      </tr>
-      <tr>
-        <td>~5 phút/lần · ~15 phút/lần</td>
-        <td>Tự chạy lặp lại theo chu kỳ (ngẫu nhiên hoá nhẹ).</td>
-      </tr>
-      <tr>
-        <td>Hàng ngày lúc…</td>
-        <td>
-          Chạy đúng một lần mỗi ngày vào giờ đã chọn (mặc định 08:00). Đổi giờ
-          trong ô <b>Giờ chạy hằng ngày</b>; nếu lịch đang bật, giờ mới được áp
-          dụng ngay.
-        </td>
-      </tr>
-    </table>
-    <div class="warn">
-      Lịch chỉ chạy khi <b>Chrome đang mở</b>. Nếu đến giờ mà Chrome đang tắt,
-      lần đó bị bỏ qua và đợi hôm sau (không chạy bù). Khi chạy nền xong,
-      extension gửi thông báo hệ thống báo kết quả.
-    </div>
-
-    <h2>Tùy chọn nâng cao</h2>
+    <h2>Tùy chọn</h2>
     <ul>
       <li>
-        <b>Tối thiểu / Tối đa</b>: khoảng chờ (giây) giữa mỗi lần tìm — để tự
-        nhiên hơn.
+        <b>Tìm kiếm:</b> đặt số lượt máy tính/điện thoại, khoảng nghỉ, mẫu
+        nhanh, chủ đề và có làm nhiệm vụ Rewards sau khi tìm hay không.
       </li>
       <li>
-        <b>Chủ đề tìm kiếm</b>: mặc định là <b>Theo chủ đề</b>. Chế độ này sẽ
-        tải Google Trends và các bài Wikipedia được xem nhiều ở nền, lưu tạm 6
-        giờ, rồi mở rộng chủ đề bằng gợi ý Bing. Nếu nguồn ngoài lỗi, tiện ích
-        tự quay về bộ chủ đề có sẵn.
+        <b>Lịch chạy:</b> chọn chạy thủ công, khi mở trình duyệt, theo chu kỳ
+        hoặc hằng ngày. Nút chạy theo lịch có thể bắt đầu hoặc dừng phiên.
       </li>
       <li>
-        <b>Tự làm nhiệm vụ sau khi search</b>: bật để tự click nhiệm vụ Rewards
-        sau khi search xong.
+        <b>Tùy chọn khác:</b> chọn thiết bị mô phỏng, tối ưu pha Mobile, giữ
+        đăng nhập Rewards, log nâng cao, chạy riêng nhiệm vụ hoặc bật/tắt tab mô
+        phỏng.
       </li>
       <li>
-        <b>Chỉ làm nhiệm vụ (không search)</b>: chạy riêng phần nhiệm vụ hằng
-        ngày.
-      </li>
-      <li>
-        <b>Thiết bị giả lập</b>: điểm Mobile cần giả lập điện thoại; bấm nút ⟳
-        để đổi thiết bị ngẫu nhiên.
+        <b>Dữ liệu và nhật ký:</b> tải lịch sử Bing gần nhất hoặc log lỗi để xem
+        lại.
       </li>
     </ul>
-
-    <h2>Vùng nguy hiểm</h2>
     <p>
-      Các nút màu đỏ (xoá dữ liệu duyệt web, xoá lịch sử, đặt lại extension…) là
-      <b>không hoàn tác</b>. Để tránh bấm nhầm, cần bấm <b>hai lần</b>: lần đầu
-      nút chuyển sang «Chắc chắn?», bấm lần nữa trong 3 giây mới thực hiện.
+      Các thao tác xóa dữ liệu và đặt lại tiện ích không nằm trong giao diện tùy
+      chọn thông thường.
     </p>
-    <div class="warn">
-      «Xoá lịch sử tìm kiếm Bing»: Chrome xoá <b>tất cả</b> lượt truy cập của
-      các URL đó, không chỉ trong 24 giờ.
-    </div>
+
+    <h2>Lịch chạy tự động</h2>
+    <p>
+      Lịch chỉ chạy khi trình duyệt đang mở. Nếu tới giờ mà trình duyệt đã đóng,
+      lần đó được bỏ qua. Chế độ hằng ngày dùng giờ địa phương đã chọn.
+    </p>
 
     <h2>Khắc phục sự cố</h2>
     <ul>
+      <li>Nếu một lượt không chạy, thử dừng phiên rồi nhấn Start lần nữa.</li>
+      <li>Tải log lỗi từ Tùy chọn để xem thông tin hỗ trợ chẩn đoán.</li>
       <li>
-        <b>Không ăn điểm Mobile</b>: bật «Tối ưu điểm Mobile» và «Sao lưu &amp;
-        khôi phục đăng nhập Rewards» trong Cài đặt.
-      </li>
-      <li>
-        <b>Chạy bị treo/lỗi</b>: bấm «Đặt lại dữ liệu chạy», hoặc tải
-        <b>log lỗi</b> để xem chi tiết.
-      </li>
-      <li>
-        <b>Bị đăng xuất sau khi chạy</b>: đăng nhập lại Bing; giữ bật «Sao lưu
-        &amp; khôi phục đăng nhập».
-      </li>
-      <li>
-        <b>Muốn xem log chi tiết</b>: bật «Hiện log nâng cao» rồi mở DevTools
-        của service worker (chrome://extensions → Service worker).
+        Trên Microsoft Edge, tìm kiếm Bing có thể chạy nhưng một số thao tác
+        trang Rewards có thể cần làm thủ công.
       </li>
     </ul>
-
     <h2>Lưu ý</h2>
-    <p class="sub">
-      Tự động hoá tìm kiếm có thể vi phạm điều khoản Microsoft Rewards; dùng với
-      số lần vừa phải và tự chịu rủi ro với tài khoản của bạn.
+    <p>
+      Việc tự động hóa tìm kiếm có thể chịu giới hạn theo điều khoản Microsoft
+      Rewards. Hãy dùng ở mức phù hợp với tài khoản của bạn.
     </p>
   </body>
 </html>

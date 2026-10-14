@@ -129,6 +129,7 @@ function buildFirefox(output = path.join(root, "dist", "firefox")) {
   }
   for (const file of [
     "popup.html",
+    "options.html",
     "manual.html",
     "donate.html",
     "loading.html",

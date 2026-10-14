@@ -195,7 +195,9 @@ async function main() {
           }
           const saved = await api.storage.local.get("config");
           if (!saved.config) throw new Error("Firefox service did not initialize config");
-          for (let i = 0; i < 100 && document.querySelector("#version").value !== api.runtime.getManifest().version; i++) await new Promise(r => setTimeout(r, 50));
+          for (let i = 0; i < 100 && !document.querySelector("#searchTrigger"); i++) await new Promise(r => setTimeout(r, 50));
+          if (!document.querySelector("#searchTrigger")) throw new Error("Quick-start popup did not render");
+          if (!document.querySelector("#openSettings")) throw new Error("Settings navigation is missing");
           stage = "create fixture";
           const tab = await api.tabs.create({ url: "about:blank", active: false });
           await reloadFixture();
@@ -246,7 +248,7 @@ async function main() {
           result.stopResponse = await api.runtime.sendMessage({ action: "stop" });
           const alarms = await api.alarms.getAll();
           const logs = await api.storage.local.get("_crashLog");
-          done(JSON.stringify({ ...result, config: !!saved.config, alarms: alarms.map(a => a.name), errors: (logs._crashLog || []).filter(entry => entry.level !== "event"), popupTitle: document.title, popupVersion: document.querySelector("#version").value }));
+          done(JSON.stringify({ ...result, config: !!saved.config, alarms: alarms.map(a => a.name), errors: (logs._crashLog || []).filter(entry => entry.level !== "event"), popupTitle: document.title, popupStart: document.querySelector("#searchTrigger").textContent, popupDesktopCount: document.querySelector("#desktopCount").textContent, optionsPage: api.runtime.getURL("options.html") }));
         })().catch(error => done(JSON.stringify({ error: error.message, stack: error.stack, stage })));
       `,
       })
@@ -263,7 +265,9 @@ async function main() {
     assert.equal(result.otherHostCookiePreserved, true);
     assert.equal(result.localStorageCleared, true);
     assert.equal(result.stopResponse.success, true);
-    assert.equal(result.popupVersion, manifest.version);
+    assert.equal(result.popupStart, "Start");
+    assert.equal(result.popupDesktopCount, "31");
+    assert.match(result.optionsPage, /options\.html$/);
     assert.ok(result.alarms.includes("clear"));
     assert.equal(result.errors.length, 0);
     console.log("Firefox runtime smoke test passed.");

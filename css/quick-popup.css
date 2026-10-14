@@ -1,0 +1,180 @@
+* {
+  box-sizing: border-box;
+}
+:root {
+  color-scheme: light dark;
+  --bg: #fff;
+  --surface: #f3f5f8;
+  --border: #e0e4ea;
+  --text: #171a21;
+  --muted: #667085;
+  --primary: #1769e0;
+  --danger: #c62828;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #17191e;
+    --surface: #24272e;
+    --border: #363b45;
+    --text: #f4f6fa;
+    --muted: #a4adba;
+    --primary: #4c91f0;
+    --danger: #e05b56;
+  }
+}
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: "Outfit", system-ui, sans-serif;
+  margin: 0;
+  width: 320px;
+}
+header {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 9px;
+  height: 54px;
+  padding: 0 14px;
+}
+.brandMark {
+  background: var(--primary);
+  border: 4px solid color-mix(in srgb, var(--primary) 22%, var(--bg));
+  border-radius: 50%;
+  height: 18px;
+  width: 18px;
+}
+.material-symbols-outlined {
+  font-family: "Material Symbols Outlined", sans-serif;
+  font-size: 20px;
+  font-style: normal;
+  font-weight: normal;
+  line-height: 1;
+}
+.appTitle {
+  font-size: 16px;
+  font-weight: 650;
+}
+.settingsButton {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  height: 36px;
+  justify-content: center;
+  margin-left: auto;
+  width: 36px;
+}
+.settingsButton:hover {
+  background: var(--surface);
+  color: var(--text);
+}
+main {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 16px 16px;
+}
+.intro {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 0;
+  text-align: center;
+}
+.plan {
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: flex;
+  justify-content: center;
+  min-height: 86px;
+  padding: 12px;
+}
+.plan div {
+  align-items: center;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 4px;
+}
+.plan div span {
+  color: var(--muted);
+  font-size: 12px;
+}
+.plan strong {
+  font-size: 27px;
+  font-weight: 600;
+}
+.planDivider {
+  color: var(--muted);
+  font-size: 18px;
+  padding: 0 8px;
+}
+.runStatus {
+  font-size: 13px;
+  margin: 2px 0 0;
+  min-height: 19px;
+  text-align: center;
+}
+.progressTrack {
+  background: var(--surface);
+  border-radius: 99px;
+  height: 7px;
+  overflow: hidden;
+}
+.progressTrack span {
+  background: var(--primary);
+  border-radius: inherit;
+  display: block;
+  height: 100%;
+  transition: width 0.25s ease;
+  width: 0;
+}
+.progressText {
+  color: var(--muted);
+  font-size: 12px;
+  margin: -5px 0 0;
+  min-height: 16px;
+  text-align: center;
+}
+.trigger {
+  background: var(--primary);
+  border: 0;
+  border-radius: 10px;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-size: 16px;
+  font-weight: 650;
+  min-height: 46px;
+}
+.trigger:hover {
+  filter: brightness(1.08);
+}
+.trigger.stopping {
+  background: var(--danger);
+}
+.trigger:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+.guideLink {
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  padding: 3px;
+}
+.guideLink:hover {
+  color: var(--primary);
+}
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
