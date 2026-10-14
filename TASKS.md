@@ -162,7 +162,7 @@ active. Keep the remaining schedule/settings panels in place until Task 6.
 
 - `popup.html`
 - `js/popup.js`
-- `css/popup.css`
+- `css/quick-popup.css`
 - `tests/popupQuickStart.test.js`
 
 **Estimated scope:** Medium
@@ -193,7 +193,7 @@ options page. Add a clear action to open or focus the options tab.
 
 - `popup.html`
 - `js/popup.js`
-- `css/popup.css`
+- `css/quick-popup.css`
 - `tests/popupQuickStart.test.js`
 
 **Estimated scope:** Medium

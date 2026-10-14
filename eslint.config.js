@@ -6,9 +6,8 @@ const prettier = require("eslint-config-prettier");
  * Flat ESLint config for the Search Auto extension.
  *
  * - js/**            → browser + WebExtension (chrome.*) globals, ES modules.
- * - js/popup.js      → additionally exposes the bundled jQuery ($ / jQuery).
  * - tests/**         → Node + Jest (CommonJS); jsdom-style browser globals too.
- * - Vendored/data    → jquery.js and the query catalogues are not linted.
+ * - Vendored/data    → the query catalogues are not linted.
  *
  * Formatting is delegated to Prettier (eslint-config-prettier disables any
  * stylistic rules that would conflict), so ESLint only flags real problems.
@@ -18,7 +17,6 @@ module.exports = [
     ignores: [
       "node_modules/**",
       "coverage/**",
-      "js/jquery.js",
       "js/queries.js",
       "js/queries_extra.js",
     ],
@@ -48,14 +46,6 @@ module.exports = [
         },
       ],
       "no-empty": ["warn", { allowEmptyCatch: true }],
-    },
-  },
-
-  // popup.js drives the UI through the bundled jQuery.
-  {
-    files: ["js/popup.js"],
-    languageOptions: {
-      globals: { ...globals.jquery },
     },
   },
 

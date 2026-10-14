@@ -6,15 +6,12 @@ const path = require("path");
 const vm = require("vm");
 
 const root = path.resolve(__dirname, "..");
-const ignored = new Set(["jquery.js"]);
-
 function walk(dir) {
   const entries = fs.readdirSync(dir, { withFileTypes: true });
   return entries.flatMap((entry) => {
     const fullPath = path.join(dir, entry.name);
     if (entry.isDirectory()) return walk(fullPath);
     if (!entry.isFile() || !entry.name.endsWith(".js")) return [];
-    if (ignored.has(entry.name)) return [];
     return [fullPath];
   });
 }

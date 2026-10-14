@@ -33,7 +33,6 @@
     ],
     "collectCoverageFrom": [
       "js/*.js",
-      "!js/jquery.js",
       "!js/queries.js"
     ],
     "watchPathIgnorePatterns": [

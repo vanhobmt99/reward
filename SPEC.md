@@ -47,7 +47,7 @@ The module boundaries and build order were reviewed and approved by the user on
 
 ## Project Structure
 
-- `popup.html`, `js/popup.js`, `css/popup.css` — shared quick popup for Chrome
+- `popup.html`, `js/popup.js`, `css/quick-popup.css` — shared quick popup for Chrome
   and Firefox.
 - `options.html`, `js/options.js`, `css/options.css` — dedicated settings page.
 - `js/config-defaults.js`, `js/utils.js`, `js/service.js` — configuration,
