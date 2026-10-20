@@ -1,6 +1,5 @@
 node_modules/
 dist/
-package-lock.json
 *.log
 *.tmp
 *.bak
@@ -23,6 +22,20 @@ terminals/
 # Test coverage output
 coverage/
 test-results/
+playwright-report/
+blob-report/
+.eslintcache
+.cache/
+
+# Local secrets and signing material
+.env
+.env.*
+!.env.example
+!.env.sample
+*.pem
+*.key
+*.p12
+*.pfx
 
 # Machine-local Claude Code settings (permission allowlist), not shared
 .claude/settings.local.json

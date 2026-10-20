@@ -87,11 +87,6 @@ select:focus-visible {
   width: 20px;
 }
 
-.brandIcon {
-  color: var(--primary);
-  font-size: 22px;
-}
-
 .headerCopy {
   margin: 36px auto 10px;
   max-width: 760px;
@@ -180,26 +175,13 @@ main {
   gap: 13px;
 }
 
-.sectionIcon {
-  align-items: center;
-  background: var(--primary-soft);
-  border-radius: 10px;
-  color: var(--primary);
-  display: inline-flex;
-  flex: 0 0 40px;
-  font-size: 22px;
-  height: 40px;
-  justify-content: center;
-}
-
 .sectionHeading h2 {
   font-size: 18px;
   letter-spacing: -0.01em;
   margin: 0 0 4px;
 }
 
-.sectionHeading p,
-.sectionPlaceholder {
+.sectionHeading p {
   color: var(--text-muted);
   font-size: 14px;
   line-height: 1.5;
@@ -436,12 +418,6 @@ main {
 
 .sectionHeading p {
   margin-bottom: 0;
-}
-
-.sectionPlaceholder {
-  border-top: 1px solid var(--border);
-  margin: 18px 0 0;
-  padding-top: 16px;
 }
 
 .pageFooter {

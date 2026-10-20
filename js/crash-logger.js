@@ -135,10 +135,6 @@ async function getCrashLog() {
   return Array.isArray(existing) ? existing : [];
 }
 
-export async function clearCrashLog() {
-  await _storageSet({ [CRASH_LOG_KEY]: [] });
-}
-
 /** Flatten the log into human-readable text, ready to drop into a .txt file. */
 export async function exportCrashLogText() {
   const list = await getCrashLog();

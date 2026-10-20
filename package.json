@@ -17,6 +17,7 @@
     "format:check": "prettier --check \"**/*.{js,cjs,json,md,html,css}\""
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.5",
     "acorn": "^8.18.0",
     "@playwright/test": "^1.63.0",
     "eslint": "^9.39.4",

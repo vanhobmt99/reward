@@ -25,8 +25,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             success: true,
             message: "pong",
           });
-          console.log("Tab is active:", request.tabId);
-
           break;
         }
         case "login": {
@@ -53,14 +51,12 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             ) {
               await delay(1000);
               menuLink.click();
-              console.log("Clicked sign in link");
               sendResponse({
                 success: true,
                 signInInitiated: true,
                 loggedIn: false,
               });
             } else {
-              console.log("User already logged in or no login link");
               sendResponse({ success: true, loggedIn: Boolean(isLoggedIn) });
             }
           } else {
@@ -142,7 +138,6 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
             try {
               if (submitBtn) {
                 submitBtn.click();
-                console.log("Clicked search submit button");
               } else {
                 const enterEvent = new KeyboardEvent("keydown", {
                   bubbles: true,

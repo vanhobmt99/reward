@@ -1,7 +1,6 @@
 node_modules/
 coverage/
 package-lock.json
-js/jquery.js
 js/queries.js
 js/queries_extra.js
 logo/
