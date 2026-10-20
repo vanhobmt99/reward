@@ -1,0 +1,83 @@
+const js = require("@eslint/js");
+const globals = require("globals");
+const prettier = require("eslint-config-prettier");
+
+/**
+ * Flat ESLint config for the Search Auto extension.
+ *
+ * - js/**            → browser + WebExtension (chrome.*) globals, ES modules.
+ * - tests/**         → Node + Jest (CommonJS); jsdom-style browser globals too.
+ * - Vendored/data    → the query catalogues are not linted.
+ *
+ * Formatting is delegated to Prettier (eslint-config-prettier disables any
+ * stylistic rules that would conflict), so ESLint only flags real problems.
+ */
+module.exports = [
+  {
+    ignores: [
+      "node_modules/**",
+      "coverage/**",
+      "js/queries.js",
+      "js/queries_extra.js",
+    ],
+  },
+
+  js.configs.recommended,
+
+  // Extension source (service worker, popup, content script, helper modules).
+  {
+    files: ["js/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: {
+        ...globals.browser,
+        ...globals.webextensions,
+      },
+    },
+    rules: {
+      "no-unused-vars": [
+        "warn",
+        {
+          args: "none",
+          caughtErrors: "none",
+          ignoreRestSiblings: true,
+          varsIgnorePattern: "^_",
+        },
+      ],
+      "no-empty": ["warn", { allowEmptyCatch: true }],
+    },
+  },
+
+  // Test suite: Node + Jest, CommonJS, with jsdom browser globals available.
+  {
+    files: ["tests/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "commonjs",
+      globals: {
+        ...globals.node,
+        ...globals.jest,
+        ...globals.browser,
+      },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { args: "none", varsIgnorePattern: "^_" }],
+    },
+  },
+
+  // Config files run in Node/CommonJS.
+  {
+    files: ["eslint.config.js", "scripts/**/*.cjs"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "commonjs",
+      globals: { ...globals.node },
+    },
+    rules: {
+      "no-unused-vars": ["warn", { args: "none", ignoreRestSiblings: true }],
+    },
+  },
+
+  prettier,
+];

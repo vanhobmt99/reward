@@ -1,0 +1,505 @@
+:root {
+  color-scheme: light dark;
+  --primary: #0072ff;
+  --primary-soft: rgba(0, 114, 255, 0.1);
+  --text: #14171f;
+  --text-muted: #626b78;
+  --bg: #f5f7fa;
+  --surface: #fff;
+  --border: #dde1e6;
+  --focus: #005fcc;
+  font-family:
+    "Outfit",
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    Arial,
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --primary: #75adff;
+    --primary-soft: rgba(117, 173, 255, 0.14);
+    --text: #f4f6fa;
+    --text-muted: #a4adba;
+    --bg: #121419;
+    --surface: #1c2027;
+    --border: #343a44;
+    --focus: #9bc4ff;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  margin: 0;
+  min-width: 320px;
+}
+
+a {
+  color: inherit;
+}
+
+a:focus-visible,
+button:focus-visible,
+input:focus-visible,
+select:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 3px;
+}
+
+.pageHeader {
+  background:
+    radial-gradient(ellipse at 85% 0%, var(--primary-soft), transparent 42%),
+    var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 22px max(20px, calc((100vw - 1120px) / 2));
+}
+
+.brand {
+  align-items: center;
+  color: var(--text);
+  display: inline-flex;
+  font-size: 14px;
+  font-weight: 600;
+  gap: 8px;
+  text-decoration: none;
+}
+
+.brandMark {
+  background: var(--primary);
+  border: 4px solid color-mix(in srgb, var(--primary) 22%, var(--bg));
+  border-radius: 50%;
+  flex: 0 0 auto;
+  height: 20px;
+  width: 20px;
+}
+
+.brandIcon {
+  color: var(--primary);
+  font-size: 22px;
+}
+
+.headerCopy {
+  margin: 36px auto 10px;
+  max-width: 760px;
+}
+
+.eyebrow {
+  color: var(--primary);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin: 0 0 8px;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  font-size: clamp(28px, 5vw, 38px);
+  letter-spacing: -0.03em;
+  line-height: 1.15;
+  margin-bottom: 10px;
+}
+
+.intro {
+  color: var(--text-muted);
+  font-size: 16px;
+  line-height: 1.6;
+  margin-bottom: 0;
+  max-width: 620px;
+}
+
+.pageLayout {
+  display: grid;
+  gap: 28px;
+  grid-template-columns: 190px minmax(0, 760px);
+  justify-content: center;
+  margin: 30px auto;
+  max-width: 1120px;
+  padding: 0 20px;
+}
+
+.sectionNav {
+  align-self: start;
+  display: grid;
+  gap: 4px;
+  position: sticky;
+  top: 20px;
+}
+
+.sectionNav a {
+  border-radius: 8px;
+  color: var(--text-muted);
+  font-size: 14px;
+  padding: 10px 12px;
+  text-decoration: none;
+}
+
+.sectionNav a:hover,
+.sectionNav a:focus-visible {
+  background: var(--primary-soft);
+  color: var(--text);
+}
+
+main {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.settingsCard {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 5px 20px rgba(19, 31, 51, 0.035);
+  padding: 22px;
+  scroll-margin-top: 20px;
+}
+
+.sectionHeading {
+  align-items: flex-start;
+  display: flex;
+  gap: 13px;
+}
+
+.sectionIcon {
+  align-items: center;
+  background: var(--primary-soft);
+  border-radius: 10px;
+  color: var(--primary);
+  display: inline-flex;
+  flex: 0 0 40px;
+  font-size: 22px;
+  height: 40px;
+  justify-content: center;
+}
+
+.sectionHeading h2 {
+  font-size: 18px;
+  letter-spacing: -0.01em;
+  margin: 0 0 4px;
+}
+
+.sectionHeading p,
+.sectionPlaceholder {
+  color: var(--text-muted);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.settingsContent {
+  display: grid;
+  gap: 22px;
+  margin-top: 20px;
+}
+
+.formGroup {
+  border: 0;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.formGroup legend,
+.settingField > span {
+  color: var(--text);
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 9px;
+}
+
+.fieldGrid {
+  display: grid;
+  gap: 14px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.settingField {
+  display: block;
+  min-width: 0;
+}
+
+.control {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--text);
+  font: inherit;
+  min-height: 42px;
+  padding: 9px 11px;
+  width: 100%;
+}
+
+.control:hover {
+  border-color: var(--text-muted);
+}
+
+.fieldHint {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 7px 0 0;
+}
+
+.presetList {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.presetList button {
+  background: var(--primary-soft);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--primary);
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  min-height: 36px;
+  padding: 7px 12px;
+}
+
+.presetList button:hover {
+  border-color: var(--primary);
+}
+
+.primaryButton,
+.actionButton,
+.secondaryButton {
+  align-items: center;
+  background: var(--primary);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 600;
+  justify-content: center;
+  min-height: 42px;
+  padding: 9px 16px;
+}
+
+.primaryButton:hover,
+.actionButton:hover,
+.secondaryButton:hover {
+  filter: brightness(1.08);
+}
+
+.primaryButton:disabled,
+.actionButton:disabled,
+.secondaryButton:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.secondaryButton {
+  background: var(--surface);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.settingLabel {
+  color: var(--text);
+  display: block;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 9px;
+}
+
+.inlineActions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.deviceName {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.actionRow {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  gap: 18px;
+  justify-content: space-between;
+  padding-bottom: 16px;
+}
+
+.actionRow:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.actionRow strong {
+  font-size: 14px;
+}
+
+.actionRow .fieldHint {
+  margin-top: 4px;
+}
+
+.scheduleStatus {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.scheduleStatus:empty {
+  display: none;
+}
+
+.settingRow {
+  max-width: 440px;
+}
+
+.toggleRow {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: pointer;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  padding: 14px;
+}
+
+.toggleCopy {
+  display: grid;
+  gap: 4px;
+}
+
+.toggleCopy strong {
+  font-size: 14px;
+}
+
+.toggleCopy span {
+  color: var(--text-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.toggleRow input {
+  accent-color: var(--primary);
+  flex: 0 0 auto;
+  height: 18px;
+  width: 18px;
+}
+
+.saveStatus {
+  background: var(--text);
+  border-radius: 8px;
+  bottom: 20px;
+  color: var(--bg);
+  font-size: 13px;
+  left: 50%;
+  margin: 0;
+  opacity: 0;
+  padding: 10px 14px;
+  pointer-events: none;
+  position: fixed;
+  transform: translate(-50%, 8px);
+  transition:
+    opacity 160ms ease,
+    transform 160ms ease;
+}
+
+.saveStatus.show {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
+.sectionHeading p {
+  margin-bottom: 0;
+}
+
+.sectionPlaceholder {
+  border-top: 1px solid var(--border);
+  margin: 18px 0 0;
+  padding-top: 16px;
+}
+
+.pageFooter {
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  display: flex;
+  font-size: 12px;
+  gap: 12px;
+  justify-content: center;
+  padding: 18px 20px 26px;
+}
+
+@media (max-width: 700px) {
+  .pageHeader {
+    padding: 18px 20px 24px;
+  }
+
+  .headerCopy {
+    margin-top: 28px;
+  }
+
+  .pageLayout {
+    gap: 16px;
+    grid-template-columns: minmax(0, 1fr);
+    margin: 16px auto;
+    padding: 0 14px;
+  }
+
+  .sectionNav {
+    background: var(--bg);
+    grid-auto-columns: max-content;
+    grid-auto-flow: column;
+    overflow-x: auto;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+  }
+
+  .sectionNav a {
+    white-space: nowrap;
+  }
+
+  .settingsCard {
+    border-radius: 12px;
+    padding: 18px;
+  }
+
+  .fieldGrid {
+    gap: 10px;
+  }
+
+  .toggleRow {
+    align-items: flex-start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}

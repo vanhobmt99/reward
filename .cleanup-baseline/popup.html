@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Search Auto</title>
+    <link rel="shortcut icon" href="/logo/bing.png" type="image/x-icon" />
+    <link rel="stylesheet" href="/css/fonts.css" />
+    <link rel="stylesheet" href="/css/quick-popup.css" />
+  </head>
+  <body>
+    <header>
+      <span class="brandMark" aria-hidden="true"></span>
+      <span class="appTitle">Search Auto</span>
+      <button
+        id="openSettings"
+        class="settingsButton"
+        type="button"
+        aria-label="Mở tùy chọn"
+        title="Tùy chọn"
+      >
+        <span class="material-symbols-outlined" aria-hidden="true"
+          >settings</span
+        >
+      </button>
+    </header>
+    <main>
+      <p class="intro">Tìm kiếm theo cấu hình đã lưu</p>
+      <div class="plan" aria-label="Cấu hình tìm kiếm">
+        <div><span>Máy tính</span><strong id="desktopCount">—</strong></div>
+        <span class="planDivider" aria-hidden="true">+</span>
+        <div><span>Điện thoại</span><strong id="mobileCount">—</strong></div>
+      </div>
+      <p id="runStatus" class="runStatus" role="status" aria-live="polite">
+        Đang tải trạng thái…
+      </p>
+      <div
+        class="progressTrack"
+        role="progressbar"
+        aria-label="Tiến độ tìm kiếm"
+        aria-valuemin="0"
+        aria-valuemax="100"
+        aria-valuenow="0"
+      >
+        <span id="progressFill"></span>
+      </div>
+      <p id="progressText" class="progressText"></p>
+      <button id="searchTrigger" class="trigger" type="button" disabled>
+        Start
+      </button>
+      <button id="openGuide" class="guideLink" type="button">
+        Hướng dẫn sử dụng
+      </button>
+    </main>
+    <script src="/js/popup.js" type="module"></script>
+  </body>
+</html>
