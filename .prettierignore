@@ -1,4 +1,5 @@
 node_modules/
+.cleanup-baseline/
 coverage/
 package-lock.json
 js/queries.js

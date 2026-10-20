@@ -32,6 +32,9 @@
     "testMatch": [
       "**/tests/**/*.test.js"
     ],
+    "modulePathIgnorePatterns": [
+      "<rootDir>/.cleanup-baseline/"
+    ],
     "collectCoverageFrom": [
       "js/*.js",
       "!js/queries.js"
