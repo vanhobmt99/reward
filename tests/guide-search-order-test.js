@@ -27,7 +27,8 @@ function readRepo(relative) {
 function listGuides(directory, found) {
   for (const entry of fs.readdirSync(directory, {withFileTypes: true})) {
     if (entry.name === 'node_modules' || entry.name === 'dist' ||
-        entry.name === '.git') {
+        entry.name === '.git' || entry.name === '.cleanup-baseline' ||
+        entry.name === '_metadata') {
       continue;
     }
     const full = path.join(directory, entry.name);
@@ -121,7 +122,6 @@ describe('user guides and search-first order', () => {
   test('the worker searches in the current window before later Rewards work', () => {
     const serviceSource = readRepo('js/service.js');
     const phasesSource = readRepo('js/search-phases.js');
-    const telemetrySource = readRepo('js/telemetry.js');
     const initialise = functionSource(serviceSource, 'initialise');
     const phases = functionSource(phasesSource, 'runSearchPhases');
 
@@ -157,12 +157,5 @@ describe('user guides and search-first order', () => {
     expect(desktop).toBeGreaterThan(-1);
     expect(mobile).toBeGreaterThan(desktop);
     expect(phases).not.toContainSource('handlePostSearchTasks');
-
-    expect(telemetrySource)
-        .toContainSource(
-            'export const TELEMETRY_ENDPOINT = \'https://bingreward.petevincy1969.workers.dev\';');
-    expect(telemetrySource)
-        .toContainSource('url.hostname !== \'your-worker-name.workers.dev\'');
-    expect(telemetrySource).toContainSource('consent = false');
   });
 });

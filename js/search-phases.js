@@ -568,8 +568,7 @@ export async function handlePostSearchTasks(
  *     runSucceeded: (boolean|undefined), endedSessionType:
  * (string|null|undefined), getScheduleAlarmDelayMs:
  * (undefined|function((string|undefined)): ?number), isScheduledModeActive:
- * (undefined|function(): boolean), notifyFn: (undefined|function(boolean):
- * void)}} CleanupDependencies
+ * (undefined|function(): boolean)}} CleanupDependencies
  */
 /**
  * Releases a run's tab and, only while no newer run owns shared state, its UI,
@@ -593,7 +592,6 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
     runSucceeded = false,
     getScheduleAlarmDelayMs,
     isScheduledModeActive,
-    notifyFn,
   } = deps;
 
   /** @return {boolean} Whether another run owns shared state now. */
@@ -642,18 +640,6 @@ export async function cleanupAfterRun(tabId, expectedSessionId, deps) {
   }
   if (hasConflictingRun()) {
     return;
-  }
-
-  // A scheduled run finished while the popup was closed — surface the outcome
-  // via a system notification when the caller provides one. `isCurrentSession`
-  // filters out user-initiated stops (the session is already gone by cleanup
-  // time), which need no "run failed" notification.
-  if (sessionType === 'schedule' && isCurrentSession &&
-      typeof notifyFn === 'function') {
-    try {
-      notifyFn(runSucceeded);
-    } catch (e) {
-    }
   }
 
   const shouldRearmSchedule = !hasConflictingRun() &&

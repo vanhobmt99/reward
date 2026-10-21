@@ -119,34 +119,6 @@
           </li>
         </ul>
       </section>
-      <section class="guide" aria-labelledby="deviceReportTitle">
-        <h2 id="deviceReportTitle">Báo cáo thiết bị (tùy chọn)</h2>
-        <p>
-          Chỉ khi bạn bấm nút bên dưới, tiện ích mới đọc và gửi thông tin hệ
-          điều hành, CPU, RAM, GPU, màn hình, lưu trữ, pin, số mục thiết bị âm
-          thanh/camera được trình duyệt cho phép thấy, font ước lượng, ngôn ngữ,
-          múi giờ, mạng ước lượng, HDR/giao diện và tín hiệu WebDriver/GPU ảo.
-          Báo cáo còn gồm User-Agent, kích thước màn hình, các tín hiệu trình
-          duyệt và địa chỉ WebRTC mà trình duyệt cho phép đọc. Bản v4 còn ghi
-          Client Hints (nếu có), tham số và extension WebGL/WebGL2, hash Canvas
-          riêng, khả năng phát các định dạng media, lựa chọn hiển thị và ước
-          lượng dung lượng lưu trữ của tiện ích trên trình duyệt (không phải
-          dung lượng trống của ổ cứng). Cloudflare ghi
-          địa chỉ IP kết nối, quốc gia, ASN và phiên bản TLS; bản JSON được lưu
-          tại Cloudflare D1 và gửi vào chat Telegram của bot. Không đo DNS
-          resolver khi chưa có tên miền kiểm tra DNS riêng.
-          Báo cáo có mã profile và hash Canvas/âm thanh/môi trường; đây không
-          phải mã phần cứng cố định. Không đọc nội dung tệp, mật khẩu, lịch sử
-          duyệt, serial ổ cứng hay ghi âm/chụp hình.
-        </p>
-        <p>Nơi nhận: <span id="deviceReportReceiver"></span></p>
-        <p>Nếu đã gửi báo cáo phiên bản cũ, bạn có thể gửi phiên bản mở rộng một lần.</p>
-        <p>Bạn có thể bỏ qua bước này và dùng tiện ích bình thường.</p>
-        <button id="sendDeviceReport" type="button" disabled>
-          Đồng ý gửi báo cáo thiết bị một lần
-        </button>
-        <p id="deviceReportStatus" role="status" aria-live="polite"></p>
-      </section>
     </main>
     <script type="module" src="/js/donate.js"></script>
   </body>

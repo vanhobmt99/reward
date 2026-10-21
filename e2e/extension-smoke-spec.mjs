@@ -8,7 +8,7 @@ import storageSmoke from '../scripts/storage-smoke.cjs';
 // Use an isolated profile and Playwright's bundled Chromium for MV3 support:
 // https://playwright.dev/docs/chrome-extensions
 test(
-    'packaged Chrome extension initializes and keeps diagnostics opt-in',
+    'packaged Chrome extension initializes without device reporting',
     async () => {
       const temporary =
           fs.mkdtempSync(path.join(os.tmpdir(), 'search-auto-chrome-smoke-'));
@@ -20,6 +20,23 @@ test(
       try {
         const extension =
             chromeBuilder.buildChrome(path.join(temporary, 'extension'));
+        const manifest = JSON.parse(
+            fs.readFileSync(path.join(extension, 'manifest.json'), 'utf8'));
+        for (const permission
+                 of ['notifications',
+                     'system.cpu',
+                     'system.memory',
+                     'system.display',
+                     'system.storage',
+        ]) {
+          expect(manifest.permissions).not.toContain(permission);
+        }
+        expect(manifest.host_permissions.join(' '))
+            .not.toContain('workers.dev');
+        expect(fs.existsSync(path.join(extension, 'js/telemetry.js')))
+            .toBe(
+                false,
+            );
         context = await chromium.launchPersistentContext(
             path.join(temporary, 'profile'), {
               channel: 'chromium',
@@ -41,6 +58,7 @@ test(
         page.on('pageerror', (error) => errors.push(error.message));
         await page.goto(`${base}/popup.html`);
         await expect(page.locator('#searchTrigger')).toHaveText('Start');
+        await expect(page.locator('#openDeviceReport')).toHaveCount(0);
         await expect
             .poll(
                 () => page.evaluate(
@@ -66,9 +84,7 @@ test(
         await expect(page.locator('#searchDesk')).toHaveValue('77');
 
         await page.goto(`${base}/donate.html`);
-        await expect(page.locator('#sendDeviceReport')).toBeDisabled();
-        await expect(page.locator('#deviceReportReceiver'))
-            .toHaveText('Chưa cấu hình nơi nhận');
+        await expect(page.locator('#sendDeviceReport')).toHaveCount(0);
         expect(await page.evaluate(() => chrome.storage.local.get([
           'machineId',
           'telemetrySent',

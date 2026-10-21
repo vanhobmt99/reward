@@ -23,7 +23,6 @@ import {installGlobalCrashHandlers, recordCrash, recordEvent} from '/js/crash-lo
 
 import {isRewardActivityUrl as isTrustedRewardActivityUrl, tabsToClose, DEFAULT_REWARD_HOSTS as msDomains} from '/js/activity-tabs.js';
 import {trustedPressCommands} from '/js/trusted-press.js';
-import {DONATE_PAGE, shouldShowDonateOnInstall} from '/js/welcome.js';
 import {isConfirmedBingSearchUrl, isCompleteSearchCount} from '/js/search-results.js';
 import {DEFAULT_POINTS_PER_SEARCH, createSearchCreditGoal, isSearchCreditGoalReached, shouldContinueSearch, assessSearchCheckpoint} from '/js/search-credit.js';
 import {fetchSuggestions, buildQueryBurst, fetchDynamicTopics} from '/js/query-sources.js';
@@ -77,8 +76,7 @@ import {planTypingSteps, createNicheSession, humanReadDelayMs, planLongPauseIndi
  *     complete: boolean}} AuthCookieRestore
  */
 /**
- * @typedef {{notifyOnFinish: (boolean|undefined),
- *     force: (boolean|undefined)}} InitialiseOptions
+ * @typedef {{force: (boolean|undefined)}} InitialiseOptions
  */
 /** @typedef {{recordRun: (boolean|undefined)}} ActivityRunOptions */
 /** @typedef {{reuse: (boolean|undefined)}} QueryOptions */
@@ -862,27 +860,6 @@ async function armDailyScheduleAlarm(time = config?.schedule?.time) {
 }
 
 /**
- * Notifies the user when a background scheduled run finishes. The popup is
- * closed then, so a toast cannot reach them.
- * @param {boolean} succeeded Whether the scheduled run completed its work.
- */
-function notifyScheduledRunFinished(succeeded) {
-  try {
-    chrome.notifications?.create({
-      type: 'basic',
-      iconUrl: '/logo/128.png',
-      title: 'Kiếm điểm',
-      message: succeeded ?
-          'Chạy theo lịch hoàn tất — nhiệm vụ hằng ngày đã xong.' :
-          'Chạy theo lịch gặp lỗi. Mở extension để xem chi tiết.',
-      priority: 1,
-    });
-  } catch (error) {
-    logs && log(`[NOTIFY] - Could not notify: ${error.message}`, 'warning');
-  }
-}
-
-/**
  * @return {!Promise<boolean>} Whether getuserinfo reports a signed-in Rewards
  *     user. Network and payload failures count as signed out.
  */
@@ -1066,9 +1043,7 @@ async function tryStartScheduledRun(source = 'SCHEDULE') {
 
   // Single persistence: counters + session state
   await updateConfigSections({runtime: config.runtime});
-  // Scheduled runs start in the background (alarm/startup) — the popup is
-  // closed, so surface the outcome via an OS notification.
-  return initialise(config.schedule, session.id, {notifyOnFinish: true});
+  return initialise(config.schedule, session.id);
 }
 
 /**
@@ -5574,9 +5549,7 @@ async function activity(tabId, interruptible = true, options = {}) {
 }
 
 /**
- * Starts searches and activities for one session. `notifyOnFinish` is set only
- * by background triggers (alarms/startup): a user who started the run from the
- * open popup watches it live and needs no OS notification. `force` runs the
+ * Starts searches and activities for one session. `force` runs the
  * requested plan as-is, ignoring today's counters entirely: no trimming for a
  * completed counter, and no stopping when the daily quota turns out to be
  * full. It is set by the popup's Search button — a scheduled trigger must
@@ -5585,14 +5558,13 @@ async function activity(tabId, interruptible = true, options = {}) {
  * @param {?SearchPlanInput} searches Counts and delays requested for this run.
  * @param {?string=} expectedSessionId Session that must still own the worker.
  *     Null skips the ownership check.
- * @param {!InitialiseOptions=} options Finish notification and force flags.
- *     Both default to false.
+ * @param {!InitialiseOptions=} options Force flag, false by default.
  * @return {!Promise<boolean>} Whether the run's required phases succeeded.
  */
 async function initialise(
     searches,
     expectedSessionId = null,
-    {notifyOnFinish = false, force = false} = {},
+    {force = false} = {},
 ) {
   if (expectedSessionId && !isSessionStillActive(expectedSessionId)) {
     logs &&
@@ -5955,7 +5927,6 @@ async function initialise(
        * @return {boolean} Whether the stored schedule is a periodic mode.
        */
       isScheduledModeActive: () => isScheduledModeActive(),
-      notifyFn: notifyOnFinish ? notifyScheduledRunFinished : undefined,
     });
   }
 
@@ -6031,16 +6002,9 @@ chrome.alarms.onAlarm.addListener(async (alarm) => {
   }
 });
 
-chrome.runtime.onInstalled.addListener(async (details) => {
+chrome.runtime.onInstalled.addListener(async () => {
   await configReady;
   await bootstrapConfig();
-  if (!shouldShowDonateOnInstall(details?.reason)) {
-    return;
-  }
-  await chrome.tabs.create({
-    url: chrome.runtime.getURL(DONATE_PAGE),
-    active: true,
-  });
 });
 chrome.runtime.onStartup.addListener(async () => {
   try {

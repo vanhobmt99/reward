@@ -124,10 +124,6 @@ document.querySelector('#openSettings').addEventListener('click', () => {
 document.querySelector('#openGuide').addEventListener('click', () => {
   chrome.tabs.create({url: '/manual.html'});
 });
-document.querySelector('#openDeviceReport').addEventListener('click', () => {
-  chrome.tabs.create({url: '/donate.html#deviceReportTitle'});
-});
-
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes.config) {
     return;

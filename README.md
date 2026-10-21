@@ -2,18 +2,18 @@
 
 Search Auto là tiện ích trình duyệt giúp bạn đặt số lượt tìm kiếm Bing cho máy tính và điện thoại, chạy các nhiệm vụ Microsoft Rewards được hỗ trợ, theo dõi tiến độ và đặt lịch khi trình duyệt đang mở.
 
-**[Tải Search Auto cho Chrome](https://github.com/vanhobmt99/reward/releases/download/v2.3.2/search-auto-chrome-2.3.2.zip)** · [Trang giới thiệu và hướng dẫn](https://vanhobmt99.github.io/reward/) · [Bản Firefox thử nghiệm](docs/firefox.md)
+**[Tải Search Auto cho Chrome](https://github.com/vanhobmt99/reward/releases/download/v2.3.3/search-auto-chrome-2.3.3.zip)** · [Trang giới thiệu và hướng dẫn](https://vanhobmt99.github.io/reward/) · [Bản Firefox thử nghiệm](docs/firefox.md)
 
 ## Search Auto có gì?
 
 - Chọn số lượt tìm kiếm trên máy tính và điện thoại, chủ đề truy vấn và khoảng nghỉ giữa các lượt.
 - Bấm chạy hoặc dừng ngay trong popup; xem tiến độ trong lúc tiện ích hoạt động.
 - Tùy chọn chạy nhiệm vụ Rewards được hỗ trợ và đặt lịch khi trình duyệt còn mở.
-- Xem nhật ký lỗi và gửi **báo cáo thiết bị tùy chọn** khi bạn chủ động đồng ý.
+- Xem nhật ký lỗi trong trang Tùy chọn; không hiện thông báo hệ điều hành.
 
 ## Tải và cài trên Chrome
 
-1. [Tải gói Chrome 2.3.2](https://github.com/vanhobmt99/reward/releases/download/v2.3.2/search-auto-chrome-2.3.2.zip) rồi giải nén. Chọn thư mục đã giải nén có tệp `manifest.json` ở ngay bên trong.
+1. [Tải gói Chrome 2.3.3](https://github.com/vanhobmt99/reward/releases/download/v2.3.3/search-auto-chrome-2.3.3.zip) rồi giải nén. Chọn thư mục đã giải nén có tệp `manifest.json` ở ngay bên trong.
 2. Mở `chrome://extensions`, bật **Chế độ dành cho nhà phát triển** và chọn **Tải tiện ích đã giải nén**.
 3. Ghim Search Auto lên thanh công cụ, đăng nhập Bing và Microsoft Rewards trong cùng hồ sơ Chrome, rồi mở popup để đặt số lượt tìm kiếm.
 
@@ -30,7 +30,7 @@ Nếu tải mã nguồn từ GitHub thay vì gói phát hành, bạn cũng có t
 
 Search Auto không thuộc Microsoft và không bảo đảm tài khoản nhận điểm. Việc ghi nhận lượt tìm kiếm, giới hạn tài khoản và nhiệm vụ do Microsoft quyết định; hãy đọc điều khoản Microsoft Rewards áp dụng cho tài khoản của bạn. Các cài đặt khoảng nghỉ hoặc số tài khoản không bảo đảm tránh được giới hạn hay khóa tài khoản.
 
-Báo cáo thiết bị là **tùy chọn**: tiện ích chỉ gửi khi bạn bấm nút đồng ý trên trang báo cáo. Báo cáo được lưu trong Cloudflare D1 và chuyển vào Telegram của dự án; xem [dữ liệu được đọc và các giới hạn](docs/device-report.md). Chức năng tìm kiếm không yêu cầu gửi báo cáo.
+Phiên bản hiện tại không thu thập hoặc gửi báo cáo dấu vân tay thiết bị. Các quyền đọc thông số CPU, RAM, màn hình và ổ lưu trữ đã được gỡ khỏi tiện ích.
 
 ---
 

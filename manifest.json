@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "Search Auto",
   "short_name": "RSA",
-  "version": "2.3.2",
+  "version": "2.3.3",
   "description": "Rewards Search Automator - Automate daily Bing searches for Microsoft Rewards and mobile points with device simulation.",
   "action": {
     "default_popup": "/popup.html",
@@ -39,12 +39,7 @@
     "webNavigation",
     "history",
     "debugger",
-    "cookies",
-    "notifications",
-    "system.cpu",
-    "system.memory",
-    "system.display",
-    "system.storage"
+    "cookies"
   ],
   "host_permissions": [
     "*://*.bing.com/*",
@@ -53,8 +48,7 @@
     "*://login.live.com/*",
     "*://login.microsoftonline.com/*",
     "*://account.microsoft.com/*",
-    "*://rewards.bing.com/*",
-    "https://*.workers.dev/*"
+    "*://rewards.bing.com/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"

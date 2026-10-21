@@ -63,7 +63,6 @@ function fixture() {
      * @return {boolean} Whether schedule mode is active.
      */
     isScheduledModeActive: () => true,
-    notifyFn: jest.fn(),
     log: jest.fn(),
   };
   return {config, deps, startNew};
@@ -106,18 +105,14 @@ test.each(['removeTabFn', 'stopCurrentSession', 'clearBadgeFn'])(
       });
       expect(deps.setConfig).not.toHaveBeenCalled();
       expect(deps.createAlarm).not.toHaveBeenCalled();
-      expect(deps.notifyFn).not.toHaveBeenCalled();
     });
 
-test(
-    'a new run during persistence prevents old notifications and alarm changes',
-    async () => {
-      const {deps, startNew} = fixture();
-      deps.setConfig.mockImplementationOnce(async () => startNew());
-      await cleanupAfterRun(11, 'old', deps);
-      expect(deps.notifyFn).not.toHaveBeenCalled();
-      expect(deps.createAlarm).not.toHaveBeenCalled();
-    });
+test('a new run during persistence prevents old alarm changes', async () => {
+  const {deps, startNew} = fixture();
+  deps.setConfig.mockImplementationOnce(async () => startNew());
+  await cleanupAfterRun(11, 'old', deps);
+  expect(deps.createAlarm).not.toHaveBeenCalled();
+});
 
 test(
     'coordinator blocks starts and shares concurrent stops while persistence is pending',

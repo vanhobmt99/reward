@@ -509,11 +509,7 @@ describe('service regressions', () => {
             .toContainSource('chrome.runtime.onInstalled.addListener');
         expect(serviceSource).toContainSource('await bootstrapConfig();');
         expect(serviceSource)
-            .toContainSource(
-                'if (!shouldShowDonateOnInstall(details?.reason)) { return; }',
-            );
-        expect(serviceSource)
-            .toContainSource('chrome.runtime.getURL(DONATE_PAGE)');
+            .not.toContainSource('chrome.runtime.getURL(DONATE_PAGE)');
       });
 
   test('m2 schedule mode does not auto-start on counter refresh alarms', () => {
