@@ -6,8 +6,9 @@
 
 import {withTimeout} from '/js/async-utils.js';
 
-// Bạn thay URL này bằng đường dẫn Cloudflare Worker của bạn sau khi tạo
-export const TELEMETRY_ENDPOINT = 'https://your-worker-name.workers.dev';
+// Worker nhận báo cáo thiết bị khi người dùng xác nhận gửi.
+export const TELEMETRY_ENDPOINT =
+    'https://bingreward.petevincy1969.workers.dev';
 
 /**
  * @typedef {'reported'|'estimated'|'partial'|'unsupported'|'denied'|'error'|
@@ -41,7 +42,7 @@ export const TELEMETRY_ENDPOINT = 'https://your-worker-name.workers.dev';
  */
 /**
  * @typedef {{osName: string, osVersion: string, bitness: ?string,
- *     quality: !DataQuality}} OsReading
+ *     clientHints: ?Object, quality: !DataQuality}} OsReading
  */
 /**
  * @typedef {{microphones: ?number, speakers: ?number, cameras: ?number,
@@ -53,7 +54,8 @@ export const TELEMETRY_ENDPOINT = 'https://your-worker-name.workers.dev';
  */
 /**
  * @typedef {{gpu: string, vendor: string, maxTexture: ?number,
- *     extensionsCount: ?number, quality: !DataQuality}} GpuReading
+ *     extensionsCount: ?number, details: !Object,
+ *     quality: !DataQuality}} GpuReading
  */
 /** @typedef {{fonts: ?Array<string>, quality: !DataQuality}} FontsReading */
 /**
@@ -72,7 +74,8 @@ export const TELEMETRY_ENDPOINT = 'https://your-worker-name.workers.dev';
  *     battery: !BatteryReading, gpuInfo: !GpuReading, fonts: !FontsReading,
  *     vmAndAuto: !EnvironmentReading,
  *     netAndTheme: !NetworkAndThemeReading, language: string,
- *     timezone: string}} DeviceSnapshot
+ *     timezone: string, browserSignals: !Object, canvas: !Object,
+ *     originStorage: !Object, webRtc: !Object}} DeviceSnapshot
  */
 /**
  * @typedef {{os: string, osVersion: string, bitness: string, isLaptop: string,
@@ -83,7 +86,10 @@ export const TELEMETRY_ENDPOINT = 'https://your-worker-name.workers.dev';
  * string, screen: string, pixelRatio: string, hdrSupport: string, theme:
  * string, network: string, storage: string, peripherals: string,
  *     audioFingerprint: string, installedFonts: string, language: string,
- *     timezone: string, dataQuality: !Object<string, !DataQuality>}}
+ *     timezone: string, browserSignals: !Object, canvasFingerprint: string,
+ *     originStorage: !Object,
+ *     webglDetails: !Object, webRtc: !Object,
+ *     dataQuality: !Object<string, !DataQuality>}}
  * DeviceReport
  */
 /**
@@ -398,6 +404,7 @@ async function getDetailedOsInfo() {
   let bitness = null;
   let status = 'unsupported';
   let source = 'navigator.userAgentData';
+  let clientHints = null;
 
   try {
     if (typeof navigator !== 'undefined' &&
@@ -408,7 +415,30 @@ async function getDetailedOsInfo() {
             'platformVersion',
             'architecture',
             'bitness',
+            'fullVersionList',
+            'model',
+            'wow64',
+            'formFactors',
           ]));
+      clientHints = {
+        platform: textValue(hints.platform),
+        platformVersion: textValue(hints.platformVersion),
+        architecture: textValue(hints.architecture),
+        bitness: textValue(hints.bitness),
+        model: textValue(hints.model),
+        wow64: typeof hints.wow64 === 'boolean' ? hints.wow64 : null,
+        formFactors: Array.isArray(hints.formFactors) ?
+            hints.formFactors.filter((item) => typeof item === 'string')
+                .slice(0, 8) :
+            null,
+        fullVersionList: Array.isArray(hints.fullVersionList) ?
+            hints.fullVersionList.slice(0, 12).map(
+                (item) => ({
+                  brand: textValue(item?.brand),
+                  version: textValue(item?.version),
+                })) :
+            null,
+      };
       const version = typeof hints.platformVersion === 'string' &&
               /^\d+\.\d+\.\d+$/.test(hints.platformVersion) ?
           hints.platformVersion :
@@ -479,7 +509,13 @@ async function getDetailedOsInfo() {
     }
   }
 
-  return {osName, osVersion, bitness, quality: quality(status, source)};
+  return {
+    osName,
+    osVersion,
+    bitness,
+    clientHints,
+    quality: quality(status, source),
+  };
 }
 
 /**
@@ -520,6 +556,66 @@ async function getPeripheralsCount() {
 }
 
 /**
+ * @return {!Object} WebGL2 capability sample from a separate context.
+ */
+function getWebGl2Info() {
+  const result = {
+    supported: false,
+    status: 'unsupported',
+    version: null,
+    extensions: null,
+    limits: {},
+  };
+  let gl;
+  try {
+    gl = document.createElement('canvas').getContext('webgl2');
+    if (!gl) {
+      return result;
+    }
+    result.supported = true;
+    result.status = 'partial';
+    result.version = textValue(gl.getParameter(gl.VERSION));
+    const extensions = gl.getSupportedExtensions();
+    result.extensions = Array.isArray(extensions) ?
+        extensions.filter((name) => typeof name === 'string')
+            .slice(0, 128)
+            .sort() :
+        null;
+    for (const [label, constant] of Object.entries({
+           max3DTextureSize: 'MAX_3D_TEXTURE_SIZE',
+           maxArrayTextureLayers: 'MAX_ARRAY_TEXTURE_LAYERS',
+           maxColorAttachments: 'MAX_COLOR_ATTACHMENTS',
+           maxDrawBuffers: 'MAX_DRAW_BUFFERS',
+           maxSamples: 'MAX_SAMPLES',
+           maxUniformBufferBindings: 'MAX_UNIFORM_BUFFER_BINDINGS',
+           maxVertexUniformBlocks: 'MAX_VERTEX_UNIFORM_BLOCKS',
+           maxFragmentUniformBlocks: 'MAX_FRAGMENT_UNIFORM_BLOCKS',
+           maxTransformFeedbackSeparateAttribs:
+               'MAX_TRANSFORM_FEEDBACK_SEPARATE_ATTRIBS',
+         })) {
+      try {
+        const value = Number.isFinite(gl[constant]) ?
+            gl.getParameter(gl[constant]) :
+            null;
+        result.limits[label] = nonnegative(value) ? value : null;
+      } catch {
+        result.limits[label] = null;
+      }
+    }
+    result.status = result.extensions ? 'reported' : 'partial';
+  } catch {
+    result.status = 'error';
+  } finally {
+    try {
+      gl?.getExtension('WEBGL_lose_context')?.loseContext();
+    } catch {
+      // Context may already be lost.
+    }
+  }
+  return result;
+}
+
+/**
  * Lấy thông tin card đồ họa GPU qua WebGL
  * @return {!GpuReading} Current renderer details and quality metadata.
  */
@@ -529,6 +625,22 @@ function getGpuInfo() {
   let maxTexture = null;
   let extensionsCount = null;
   let status = 'unsupported';
+  const details = {
+    status: 'unsupported',
+    version: null,
+    shadingLanguageVersion: null,
+    maskedVendor: null,
+    maskedRenderer: null,
+    extensions: null,
+    limits: {},
+    webgl2: {
+      supported: false,
+      status: 'unsupported',
+      version: null,
+      extensions: null,
+      limits: {},
+    },
+  };
   let gl;
   try {
     if (typeof document === 'undefined') {
@@ -537,12 +649,31 @@ function getGpuInfo() {
         vendor,
         maxTexture,
         extensionsCount,
+        details,
         quality: quality(status, 'WebGL'),
       };
     }
     const canvas = document.createElement('canvas');
     gl = canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
     if (gl) {
+      const readParameter = (name) => {
+        try {
+          return Number.isFinite(gl[name]) ? gl.getParameter(gl[name]) : null;
+        } catch {
+          return null;
+        }
+      };
+      const readNumber = (name) => {
+        const value = readParameter(name);
+        return nonnegative(value) ? value : null;
+      };
+      const readPair = (name) => {
+        const value = readParameter(name);
+        return value && value.length === 2 &&
+                Array.from(value).every(Number.isFinite) ?
+            Array.from(value) :
+            null;
+      };
       const debugInfo = gl.getExtension('WEBGL_debug_renderer_info');
       if (debugInfo) {
         vendor = textValue(gl.getParameter(debugInfo.UNMASKED_VENDOR_WEBGL));
@@ -552,6 +683,47 @@ function getGpuInfo() {
       maxTexture = positive(texture) ? texture : null;
       const extensions = gl.getSupportedExtensions();
       extensionsCount = Array.isArray(extensions) ? extensions.length : null;
+      details.status = 'partial';
+      details.version = textValue(readParameter('VERSION'));
+      details.shadingLanguageVersion =
+          textValue(readParameter('SHADING_LANGUAGE_VERSION'));
+      details.maskedVendor = textValue(readParameter('VENDOR'));
+      details.maskedRenderer = textValue(readParameter('RENDERER'));
+      details.extensions = Array.isArray(extensions) ?
+          extensions.filter((name) => typeof name === 'string')
+              .slice(0, 128)
+              .sort() :
+          null;
+      for (const [label, parameter] of Object.entries({
+             maxTextureSize: 'MAX_TEXTURE_SIZE',
+             maxCubeMapTextureSize: 'MAX_CUBE_MAP_TEXTURE_SIZE',
+             maxRenderbufferSize: 'MAX_RENDERBUFFER_SIZE',
+             maxVertexAttribs: 'MAX_VERTEX_ATTRIBS',
+             maxVertexUniformVectors: 'MAX_VERTEX_UNIFORM_VECTORS',
+             maxFragmentUniformVectors: 'MAX_FRAGMENT_UNIFORM_VECTORS',
+             maxVaryingVectors: 'MAX_VARYING_VECTORS',
+             maxTextureImageUnits: 'MAX_TEXTURE_IMAGE_UNITS',
+             maxVertexTextureImageUnits: 'MAX_VERTEX_TEXTURE_IMAGE_UNITS',
+             maxCombinedTextureImageUnits: 'MAX_COMBINED_TEXTURE_IMAGE_UNITS',
+             maxVertexUniformComponents: 'MAX_VERTEX_UNIFORM_COMPONENTS',
+             maxFragmentUniformComponents: 'MAX_FRAGMENT_UNIFORM_COMPONENTS',
+             redBits: 'RED_BITS',
+             greenBits: 'GREEN_BITS',
+             blueBits: 'BLUE_BITS',
+             alphaBits: 'ALPHA_BITS',
+             depthBits: 'DEPTH_BITS',
+             stencilBits: 'STENCIL_BITS',
+           })) {
+        details.limits[label] = readNumber(parameter);
+      }
+      details.limits.maxViewportDims = readPair('MAX_VIEWPORT_DIMS');
+      details.limits.aliasedLineWidthRange =
+          readPair('ALIASED_LINE_WIDTH_RANGE');
+      details.limits.aliasedPointSizeRange =
+          readPair('ALIASED_POINT_SIZE_RANGE');
+      details.status = extensionsCount !== null && details.version !== UNKNOWN ?
+          'reported' :
+          'partial';
       status = gpu !== UNKNOWN && vendor !== UNKNOWN && maxTexture !== null &&
               extensionsCount !== null ?
           'reported' :
@@ -559,6 +731,7 @@ function getGpuInfo() {
     }
   } catch (e) {
     status = 'error';
+    details.status = 'error';
   } finally {
     try {
       gl?.getExtension('WEBGL_lose_context')?.loseContext();
@@ -566,11 +739,13 @@ function getGpuInfo() {
       /* Context may already be lost. */
     }
   }
+  details.webgl2 = getWebGl2Info();
   return {
     gpu,
     vendor,
     maxTexture,
     extensionsCount,
+    details,
     quality: quality(
         status,
         'WebGL renderer (không phải danh sách toàn bộ GPU)',
@@ -646,7 +821,7 @@ async function getAudioFingerprint() {
 }
 
 /**
- * Chỉ ước lượng sự hiện diện của 20 font ứng viên qua chiều rộng chữ.
+ * Chỉ ước lượng sự hiện diện của 50 font ứng viên qua chiều rộng chữ.
  * @return {!FontsReading} Estimated matches, or null when probing fails.
  */
 function detectInstalledFonts() {
@@ -658,7 +833,7 @@ function detectInstalledFonts() {
     if (typeof document === 'undefined') {
       return {
         fonts: null,
-        quality: quality('unsupported', 'canvas.measureText; 20 font ứng viên'),
+        quality: quality('unsupported', 'canvas.measureText; 50 font ứng viên'),
       };
     }
     const canvas = document.createElement('canvas');
@@ -666,7 +841,7 @@ function detectInstalledFonts() {
     if (!ctx) {
       return {
         fonts: null,
-        quality: quality('unsupported', 'canvas.measureText; 20 font ứng viên'),
+        quality: quality('unsupported', 'canvas.measureText; 50 font ứng viên'),
       };
     }
 
@@ -700,6 +875,36 @@ function detectInstalledFonts() {
       'Constantia',
       'Palatino Linotype',
       'Corbel',
+      'Arial Black',
+      'Aptos',
+      'Bahnschrift',
+      'Book Antiqua',
+      'Candara',
+      'Century Gothic',
+      'Garamond',
+      'Helvetica',
+      'Helvetica Neue',
+      'Menlo',
+      'Monaco',
+      'Avenir Next',
+      'Gill Sans',
+      'Liberation Sans',
+      'Liberation Serif',
+      'DejaVu Sans',
+      'DejaVu Serif',
+      'Noto Sans',
+      'Noto Serif',
+      'Ubuntu',
+      'Microsoft YaHei',
+      'Microsoft JhengHei',
+      'MS Gothic',
+      'MS Mincho',
+      'Meiryo',
+      'SimSun',
+      'Yu Gothic',
+      'Segoe UI Emoji',
+      'Segoe UI Symbol',
+      'Lucida Sans Unicode',
     ];
 
     const installed = [];
@@ -722,12 +927,12 @@ function detectInstalledFonts() {
     }
     return {
       fonts: installed,
-      quality: quality('estimated', 'canvas.measureText; 20 font ứng viên'),
+      quality: quality('estimated', 'canvas.measureText; 50 font ứng viên'),
     };
   } catch (e) {
     return {
       fonts: null,
-      quality: quality('error', 'canvas.measureText; 20 font ứng viên'),
+      quality: quality('error', 'canvas.measureText; 50 font ứng viên'),
     };
   }
 }
@@ -838,6 +1043,301 @@ function getNetworkAndTheme() {
 }
 
 /**
+ * @return {!Object} Media query matches, or null when the browser hides them.
+ */
+function getMediaQuerySignals() {
+  const choices = {
+    reducedMotion: ['reduce', 'no-preference'],
+    contrast: ['more', 'less', 'custom', 'no-preference'],
+    forcedColors: ['active', 'none'],
+    invertedColors: ['inverted', 'none'],
+    colorGamut: ['rec2020', 'p3', 'srgb'],
+    pointer: ['fine', 'coarse', 'none'],
+    hover: ['hover', 'none'],
+    displayMode: ['fullscreen', 'standalone', 'minimal-ui', 'browser'],
+  };
+  const features = {
+    reducedMotion: 'prefers-reduced-motion',
+    contrast: 'prefers-contrast',
+    forcedColors: 'forced-colors',
+    invertedColors: 'inverted-colors',
+    colorGamut: 'color-gamut',
+    pointer: 'pointer',
+    hover: 'hover',
+    displayMode: 'display-mode',
+  };
+  const values = {};
+  for (const [name, options] of Object.entries(choices)) {
+    values[name] = null;
+    for (const option of options) {
+      try {
+        if (typeof window !== 'undefined' &&
+            window.matchMedia?.(`(${features[name]}: ${option})`).matches) {
+          values[name] = option;
+          break;
+        }
+      } catch {
+        break;
+      }
+    }
+  }
+  return values;
+}
+
+/**
+ * @return {!Object} Codec capability claims without playing media.
+ */
+function getMediaCodecs() {
+  const codecs = {
+    h264Video: ['video', 'video/mp4; codecs="avc1.42E01E"'],
+    vp8Video: ['video', 'video/webm; codecs="vp8"'],
+    vp9Video: ['video', 'video/webm; codecs="vp9"'],
+    av1Video: ['video', 'video/mp4; codecs="av01.0.05M.08"'],
+    aacAudio: ['audio', 'audio/mp4; codecs="mp4a.40.2"'],
+    mp3Audio: ['audio', 'audio/mpeg'],
+    opusAudio: ['audio', 'audio/ogg; codecs="opus"'],
+    flacAudio: ['audio', 'audio/flac'],
+    webmVideo: ['video', 'video/webm'],
+  };
+  const result = {};
+  for (const [name, [tag, mime]] of Object.entries(codecs)) {
+    try {
+      const element = document.createElement(tag);
+      const answer = element.canPlayType?.(mime);
+      result[name] = ['probably', 'maybe', ''].includes(answer) ? answer : null;
+    } catch {
+      result[name] = null;
+    }
+  }
+  return result;
+}
+
+/**
+ * The quota belongs to this extension origin, not to a physical drive.
+ * @return {!Promise<!Object>} Browser quota estimate with an explicit status.
+ */
+async function getOriginStorageEstimate() {
+  if (typeof navigator === 'undefined' || !navigator.storage?.estimate) {
+    return {
+      usageBytes: null,
+      quotaBytes: null,
+      status: 'unsupported',
+      source: 'navigator.storage.estimate',
+    };
+  }
+  try {
+    const estimate = await readWithDeadline(() => navigator.storage.estimate());
+    const usageBytes = nonnegative(estimate?.usage) ? estimate.usage : null;
+    const quotaBytes = nonnegative(estimate?.quota) ? estimate.quota : null;
+    return {
+      usageBytes,
+      quotaBytes,
+      status: usageBytes !== null || quotaBytes !== null ? 'estimated' :
+                                                           'unknown',
+      source: 'navigator.storage.estimate',
+    };
+  } catch {
+    return {
+      usageBytes: null,
+      quotaBytes: null,
+      status: 'error',
+      source: 'navigator.storage.estimate',
+    };
+  }
+}
+
+/**
+ * Read one Intl snapshot for the report and the composite fingerprint.
+ * @return {!Object} Browser locale settings.
+ */
+function getIntlSignals() {
+  try {
+    const options = Intl.DateTimeFormat().resolvedOptions();
+    return {
+      timeZone: textValue(options.timeZone),
+      locale: textValue(options.locale),
+      calendar: textValue(options.calendar),
+      numberingSystem: textValue(options.numberingSystem),
+      hourCycle: textValue(options.hourCycle),
+    };
+  } catch {
+    return {
+      timeZone: UNKNOWN,
+      locale: UNKNOWN,
+      calendar: UNKNOWN,
+      numberingSystem: UNKNOWN,
+      hourCycle: UNKNOWN,
+    };
+  }
+}
+
+/**
+ * Records browser-exposed values, which can differ from physical hardware.
+ * @param {?Object} clientHints Higher entropy UA hints, if available.
+ * @param {!Object} intl Browser locale settings.
+ * @return {!Object} Browser and display signals with a source label.
+ */
+function getBrowserSignals(clientHints, intl) {
+  const nav = typeof navigator === 'undefined' ? null : navigator;
+  const display = typeof screen === 'undefined' ? null : screen;
+  const view = typeof window === 'undefined' ? null : window;
+  try {
+    return {
+      userAgent: textValue(nav?.userAgent),
+      platform: textValue(nav?.platform),
+      vendor: textValue(nav?.vendor),
+      languages: Array.isArray(nav?.languages) ? nav.languages.slice(0, 12) :
+                                                 null,
+      cookieEnabled:
+          typeof nav?.cookieEnabled === 'boolean' ? nav.cookieEnabled : null,
+      doNotTrack: textValue(nav?.doNotTrack),
+      globalPrivacyControl: typeof nav?.globalPrivacyControl === 'boolean' ?
+          nav.globalPrivacyControl :
+          null,
+      pdfViewerEnabled: typeof nav?.pdfViewerEnabled === 'boolean' ?
+          nav.pdfViewerEnabled :
+          null,
+      webdriver: typeof nav?.webdriver === 'boolean' ? nav.webdriver : null,
+      maxTouchPoints: nonnegative(nav?.maxTouchPoints) ? nav.maxTouchPoints :
+                                                         null,
+      pluginCount: nonnegative(nav?.plugins?.length) ? nav.plugins.length :
+                                                       null,
+      userAgentBrands: Array.isArray(nav?.userAgentData?.brands) ?
+          nav.userAgentData.brands.slice(0, 12).map(
+              (brand) => ({brand: brand.brand, version: brand.version})) :
+          null,
+      userAgentMobile: typeof nav?.userAgentData?.mobile === 'boolean' ?
+          nav.userAgentData.mobile :
+          null,
+      clientHints,
+      intl,
+      mediaQueries: getMediaQuerySignals(),
+      mediaCodecs: getMediaCodecs(),
+      screen: display ? {
+        width: positive(display.width) ? display.width : null,
+        height: positive(display.height) ? display.height : null,
+        availWidth: positive(display.availWidth) ? display.availWidth : null,
+        availHeight: positive(display.availHeight) ? display.availHeight : null,
+        colorDepth: positive(display.colorDepth) ? display.colorDepth : null,
+        pixelDepth: positive(display.pixelDepth) ? display.pixelDepth : null,
+        orientationType: textValue(display.orientation?.type),
+        orientationAngle: Number.isFinite(display.orientation?.angle) ?
+            display.orientation.angle :
+            null,
+      } :
+                        null,
+      viewport: view ? {
+        innerWidth: positive(view.innerWidth) ? view.innerWidth : null,
+        innerHeight: positive(view.innerHeight) ? view.innerHeight : null,
+        outerWidth: positive(view.outerWidth) ? view.outerWidth : null,
+        outerHeight: positive(view.outerHeight) ? view.outerHeight : null,
+        devicePixelRatio:
+            positive(view.devicePixelRatio) ? view.devicePixelRatio : null,
+      } :
+                       null,
+      quality: quality('partial', 'navigator / screen / window'),
+    };
+  } catch {
+    return {quality: quality('error', 'navigator / screen / window')};
+  }
+}
+
+/**
+ * Gathers only locally exposed ICE candidates. No third-party STUN server is
+ * contacted; a public WebRTC IP may therefore be unavailable or mDNS-masked.
+ * @return {!Promise<!Object>} Candidate addresses or an explicit limitation.
+ */
+async function getWebRtcCandidates() {
+  if (typeof RTCPeerConnection === 'undefined') {
+    return {status: 'unsupported', candidates: [], mode: 'host-only'};
+  }
+  let peer;
+  const candidates = [];
+  try {
+    peer = new RTCPeerConnection({iceServers: []});
+    const gathered = new Promise((resolve) => {
+      peer.onicecandidate = (event) => {
+        if (!event.candidate) {
+          resolve();
+          return;
+        }
+        const candidate = event.candidate;
+        const parts = candidate.candidate?.split(/\s+/) || [];
+        const address = candidate.address || parts[4];
+        const type = candidate.type || parts[parts.indexOf('typ') + 1];
+        if (typeof address === 'string' && address.length <= 255 &&
+            ['host', 'srflx', 'relay'].includes(type) &&
+            !candidates.some(
+                (item) => item.type === type && item.address === address) &&
+            candidates.length < 12) {
+          candidates.push({type, address});
+        }
+      };
+    });
+    peer.createDataChannel('probe');
+    await readWithDeadline(async () => {
+      await peer.setLocalDescription(await peer.createOffer());
+      await gathered;
+    });
+    return {status: 'partial', candidates, mode: 'host-only'};
+  } catch {
+    return {status: 'unavailable', candidates, mode: 'host-only'};
+  } finally {
+    peer?.close();
+  }
+}
+
+/**
+ * Render Canvas once and keep only its digest in the report.
+ * @return {!Promise<!Object>} Hash, transient image data, and quality.
+ */
+async function getCanvasFingerprint() {
+  if (typeof document === 'undefined' || typeof crypto === 'undefined' ||
+      !crypto.subtle || typeof TextEncoder === 'undefined') {
+    return {
+      hash: UNKNOWN,
+      dataUrl: null,
+      quality: quality('unsupported', 'Canvas 2D / SHA-256'),
+    };
+  }
+  try {
+    const canvas = document.createElement('canvas');
+    canvas.width = 240;
+    canvas.height = 60;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) {
+      return {
+        hash: UNKNOWN,
+        dataUrl: null,
+        quality: quality('unsupported', 'Canvas 2D'),
+      };
+    }
+    ctx.textBaseline = 'top';
+    ctx.font = '14px \'Arial\', sans-serif';
+    ctx.fillStyle = '#f60';
+    ctx.fillRect(125, 1, 62, 20);
+    ctx.fillStyle = '#069';
+    ctx.fillText('SearchAuto@Device#2026', 2, 15);
+    ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
+    ctx.fillText('SearchAuto@Device#2026', 4, 17);
+    const dataUrl = canvas.toDataURL();
+    const bytes = new TextEncoder().encode(dataUrl);
+    const digest =
+        await readWithDeadline(() => crypto.subtle.digest('SHA-256', bytes));
+    const hash = Array.from(new Uint8Array(digest))
+                     .map((byte) => byte.toString(16).padStart(2, '0'))
+                     .join('');
+    return {hash, dataUrl, quality: quality('reported', 'Canvas 2D / SHA-256')};
+  } catch {
+    return {
+      hash: UNKNOWN,
+      dataUrl: null,
+      quality: quality('error', 'Canvas 2D / SHA-256'),
+    };
+  }
+}
+
+/**
  * Hash của ảnh chụp môi trường hiện tại, không phải định danh phần cứng.
  * Cùng máy có thể đổi hash; nhiều máy có thể trùng dữ liệu đầu vào.
  * @param {?DeviceSnapshot=} snapshot Readings to reuse, or null to read once.
@@ -847,29 +1347,13 @@ export async function getDeviceFingerprint(snapshot = null) {
   snapshot = snapshot || await collectDeviceSnapshot();
   const components = [];
 
-  // 1. Canvas Fingerprint
-  try {
-    const canvas = document.createElement('canvas');
-    canvas.width = 240;
-    canvas.height = 60;
-    const ctx = canvas.getContext('2d');
-    if (ctx) {
-      ctx.textBaseline = 'top';
-      ctx.font = '14px \'Arial\', sans-serif';
-      ctx.fillStyle = '#f60';
-      ctx.fillRect(125, 1, 62, 20);
-      ctx.fillStyle = '#069';
-      ctx.fillText('SearchAuto@Device#2026', 2, 15);
-      ctx.fillStyle = 'rgba(102, 204, 0, 0.7)';
-      ctx.fillText('SearchAuto@Device#2026', 4, 17);
-      components.push(canvas.toDataURL());
-    }
-  } catch (e) {
-  }
+  // 1. Reuse the same Canvas sample as the separate report hash.
+  components.push(snapshot.canvas.dataUrl || '');
 
   // 2. WebGL Fingerprint
   const {gpu, vendor, maxTexture, extensionsCount} = snapshot.gpuInfo;
   components.push(gpu, vendor, maxTexture, extensionsCount);
+  components.push(JSON.stringify(snapshot.gpuInfo.details));
 
   // 3. Audio & Fonts Fingerprint
   const {audioFp, fonts} = snapshot;
@@ -887,6 +1371,13 @@ export async function getDeviceFingerprint(snapshot = null) {
   components.push(
       storages.items?.map((s) => `${s.name}:${s.capacityGB}`).join('|') || '',
   );
+  components.push(JSON.stringify({
+    clientHints: snapshot.browserSignals.clientHints,
+    mediaCodecs: snapshot.browserSignals.mediaCodecs,
+    mediaQueries: snapshot.browserSignals.mediaQueries,
+    colorDepth: snapshot.browserSignals.screen?.colorDepth,
+    intl: snapshot.browserSignals.intl,
+  }));
   components.push(snapshot.timezone, snapshot.language);
 
   // 5. Băm thành mã hash SHA-256
@@ -916,7 +1407,7 @@ export async function getDeviceSpecs() {
  * @return {!Promise<!DeviceSnapshot>} Raw readings with quality metadata.
  */
 async function collectDeviceSnapshot() {
-  const [cpu, memory, displays, storages, osInfo, peripherals, audioFp, battery] =
+  const [cpu, memory, displays, storages, osInfo, peripherals, audioFp, battery, webRtc, originStorage, canvas] =
       await Promise.all([
         getCpuInfo(),
         getMemoryInfo(),
@@ -926,8 +1417,12 @@ async function collectDeviceSnapshot() {
         getPeripheralsCount(),
         getAudioFingerprint(),
         getBatteryAndFormFactor(),
+        getWebRtcCandidates(),
+        getOriginStorageEstimate(),
+        getCanvasFingerprint(),
       ]);
   const gpuInfo = getGpuInfo();
+  const intl = getIntlSignals();
   return {
     cpu,
     memory,
@@ -941,9 +1436,12 @@ async function collectDeviceSnapshot() {
     fonts: detectInstalledFonts(),
     vmAndAuto: checkVmAndAutomation(gpuInfo.gpu),
     netAndTheme: getNetworkAndTheme(),
+    browserSignals: getBrowserSignals(osInfo.clientHints, intl),
+    originStorage,
+    canvas,
+    webRtc,
     language: readBrowserText(() => navigator.language),
-    timezone:
-        readBrowserText(() => Intl.DateTimeFormat().resolvedOptions().timeZone),
+    timezone: intl.timeZone,
   };
 }
 
@@ -994,6 +1492,8 @@ function deviceSpecsFromSnapshot(snapshot) {
     maxTextureSize: maxTexture ?? UNKNOWN,
     webglExtensions: extensionsCount === null ? UNKNOWN :
                                                 `${extensionsCount} extensions`,
+    webglDetails: gpuInfo.details,
+    canvasFingerprint: snapshot.canvas.hash,
     displays:
         displays.items
             .map(
@@ -1028,10 +1528,13 @@ function deviceSpecsFromSnapshot(snapshot) {
     installedFonts: fonts.fonts === null ?
         UNKNOWN :
         fonts.fonts.length > 0 ?
-        `Ước lượng trong 20 font ứng viên: ${fonts.fonts.join(', ')}` :
-        'Không phát hiện trong 20 font ứng viên; không có nghĩa máy không có font',
+        `Ước lượng trong 50 font ứng viên: ${fonts.fonts.join(', ')}` :
+        'Không phát hiện trong 50 font ứng viên; không có nghĩa máy không có font',
     language: snapshot.language,
     timezone: snapshot.timezone,
+    browserSignals: snapshot.browserSignals,
+    originStorage: snapshot.originStorage,
+    webRtc: snapshot.webRtc,
     dataQuality: {
       cpu: cpu.quality,
       memory: memory.quality,
@@ -1047,6 +1550,7 @@ function deviceSpecsFromSnapshot(snapshot) {
       gpu: gpuInfo.quality,
       fonts: fonts.quality,
       audio: audioFp.quality,
+      canvas: snapshot.canvas.quality,
       environment: vmAndAuto.environmentQuality,
       automation: vmAndAuto.automationQuality,
       network: netAndTheme.networkQuality,
@@ -1122,9 +1626,10 @@ async function sendDeviceReport(endpoint) {
   try {
     const stored = await readWithDeadline(() => chrome.storage.local.get([
       'telemetrySent',
+      'telemetrySentVersion',
       'machineId',
     ]));
-    if (stored.telemetrySent) {
+    if (stored.telemetrySent && stored.telemetrySentVersion === 4) {
       return {status: 'already-sent'};
     }
     const machineId = stored.machineId || `PC-${crypto.randomUUID()}`;
@@ -1141,11 +1646,11 @@ async function sendDeviceReport(endpoint) {
           redirect: 'error',
           signal: controller.signal,
           body: JSON.stringify({
-            schemaVersion: 2,
+            schemaVersion: 4,
             machineId,
             machineIdScope: 'browser-profile-storage; not hardware identity',
             fingerprint,
-            fingerprintKind: 'environment-snapshot-v2',
+            fingerprintKind: 'environment-snapshot-v3',
             fingerprintIsStableDeviceId: false,
             device: deviceSpecsFromSnapshot(snapshot),
             reportedAt: new Date().toISOString(),
@@ -1157,6 +1662,7 @@ async function sendDeviceReport(endpoint) {
     }
     await readWithDeadline(() => chrome.storage.local.set({
       telemetrySent: true,
+      telemetrySentVersion: 4,
       lastTracked: Date.now(),
     }));
     return {status: 'sent'};

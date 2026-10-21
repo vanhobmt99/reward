@@ -68,11 +68,13 @@ describe('user guides and search-first order', () => {
   test('guides do not tell anyone to install a versioned dist zip', () => {
     const forbidden =
         /package:chrome|package:firefox|search-auto-[a-z0-9]+-\d+\.\d+\.\d+\.zip/i;
+    const publishedAsset =
+        /https:\/\/github\.com\/vanhobmt99\/reward\/releases\/download\/v(\d+\.\d+\.\d+)\/search-auto-(?:chrome|firefox)-\1\.zip/g;
     const guides = listGuides(root, []);
     expect(guides.length).toBeGreaterThan(0);
     for (const file of guides) {
       const text = fs.readFileSync(file, 'utf8');
-      expect(text).not.toMatch(forbidden);
+      expect(text.replace(publishedAsset, '')).not.toMatch(forbidden);
     }
 
     const readme = readRepo('README.md');
@@ -158,7 +160,7 @@ describe('user guides and search-first order', () => {
 
     expect(telemetrySource)
         .toContainSource(
-            'export const TELEMETRY_ENDPOINT = \'https://your-worker-name.workers.dev\';');
+            'export const TELEMETRY_ENDPOINT = \'https://bingreward.petevincy1969.workers.dev\';');
     expect(telemetrySource)
         .toContainSource('url.hostname !== \'your-worker-name.workers.dev\'');
     expect(telemetrySource).toContainSource('consent = false');

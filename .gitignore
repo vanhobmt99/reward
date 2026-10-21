@@ -29,6 +29,7 @@ blob-report/
 .cache/
 
 # Local secrets and signing material
+/cloudflare/
 .env
 .env.*
 !.env.example

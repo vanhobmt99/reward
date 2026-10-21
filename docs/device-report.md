@@ -46,27 +46,44 @@ mô tả môi trường trình duyệt hiện tại.
   không phân biệt SSD/HDD. Danh sách rỗng khác với API bị lỗi/không có quyền.
 - **Ngoại vi:** số mục micro/loa/camera được phép thấy, không phải tổng số thiết bị
   vật lý; có thể gồm mục mặc định hoặc thiết bị ảo. Lỗi/từ chối không được ghi là 0.
-- **GPU:** renderer WebGL đang dùng, không phải danh sách mọi GPU hoặc dung lượng
-  VRAM. Không có debug extension thì tên GPU có thể không xác định. Giải phóng
-  WebGL context sau khi đọc.
+- **GPU:** renderer WebGL đang dùng, các giới hạn và extension WebGL/WebGL2 mà
+  trình duyệt báo cáo; không phải danh sách mọi GPU hoặc dung lượng VRAM. Không
+  có debug extension thì tên GPU có thể không xác định. Giải phóng các WebGL
+  context sau khi đọc.
 - **Máy ảo/tự động hóa:** chỉ ghi dấu hiệu GPU ảo hoặc WebDriver. SwiftShader và
   llvmpipe chỉ cho biết render bằng phần mềm. Không có dấu hiệu không chứng minh
   máy thật hay không có tự động hóa.
-- **Font:** chỉ dò 20 font ứng viên theo chiều rộng chữ. Kết quả là ước lượng;
+- **Font:** chỉ dò 50 font ứng viên theo chiều rộng chữ. Kết quả là ước lượng;
   không dò thấy khác với không có font hoặc không đọc được Canvas.
 - **Mạng:** effectiveType/downlink là ước lượng hiệu năng, không xác định Wi-Fi,
   Ethernet hay mạng di động. Không phải phép đo tốc độ mạng thực tế.
+- **IP/WebRTC/DNS:** Cloudflare ghi IP kết nối mà Worker nhìn thấy, quốc gia,
+  ASN và phiên bản TLS nếu có. Đó có thể là IP của VPN/proxy. WebRTC chỉ dò
+  ICE candidate cục bộ, không liên hệ STUN bên thứ ba; địa chỉ LAN có thể được
+  thay bằng tên mDNS và không có public candidate không chứng minh không rò rỉ.
+  DNS resolver chưa đo được vì chưa có tên miền kiểm tra DNS riêng.
+- **Tín hiệu trình duyệt:** `browserSignals` ghi User-Agent, Client Hints mở
+  rộng nếu có, platform, vendor, languages, cookie/PDF/WebDriver/touch/plugin
+  signals, thiết lập Intl, screen/viewport, media query và kết quả `canPlayType`
+  cho một số codec. Kết quả codec chỉ là khả năng trình duyệt khai báo, không
+  phải phép thử phát video/âm thanh thực tế. Giá trị có thể bị giảm độ chính
+  xác hoặc làm giả.
+- **Quota lưu trữ:** `originStorage` là `navigator.storage.estimate()` cho
+  origin của tiện ích. Đó là ước lượng quota/usage, không phải kích thước hoặc
+  dung lượng trống của ổ đĩa vật lý.
 - **HDR/theme:** media query mô tả khả năng/ưu tiên trình duyệt đang thấy. Query
   không được hỗ trợ không được suy thành không có HDR hoặc giao diện sáng.
 - **Audio/Canvas/hash:** phụ thuộc môi trường trình duyệt; không phải serial máy.
+  `canvasFingerprint` là SHA-256 riêng của ảnh thử Canvas; ảnh gốc không nằm
+  trong báo cáo gửi đi.
   Audio thiếu mẫu hoặc có NaN/Infinity được ghi là lỗi, không thay bằng số 0.
   Giá trị 0 hợp lệ vẫn được giữ. Khi dọn audio, lỗi giải phóng một node không
   ngăn giải phóng node còn lại. Số đo chiều rộng font thiếu, âm hoặc không hữu
   hạn cũng được ghi là lỗi thay vì suy ra font đã cài.
 
-## Định dạng gửi phiên bản 2
+## Định dạng gửi phiên bản 4
 
-Payload có `schemaVersion: 2`, `fingerprintKind: "environment-snapshot-v2"` và
+Payload có `schemaVersion: 4`, `fingerprintKind: "environment-snapshot-v3"` và
 `fingerprintIsStableDeviceId: false`. Hash có thể đổi khi thay đổi ngôn ngữ,
 múi giờ, font, màn hình, trình duyệt hoặc kết quả API. Hai máy có đầu vào giống
 nhau cho cùng hash. Không so sánh như một định danh máy cố định với hash bản cũ.
@@ -76,14 +93,14 @@ phần cứng. `reportedAt` là thời điểm tạo báo cáo gửi đi; thay c
 trước đây vốn gán nhầm thời điểm gửi thành thời điểm cài đặt. Bên nhận cần đọc
 schema mới, không parse chuỗi đơn vị GiB/MiB như GB/MB thập phân.
 
-Endpoint mẫu mặc định vẫn bỏ qua toàn bộ thu thập/gửi. Bản sửa này không bật
-endpoint, không thêm quyền và không thêm cơ chế chạy ẩn. Chỉ sử dụng việc gửi
-chẩn đoán trong luồng đã thông báo cho người dùng.
+Endpoint hiện là Worker của dự án trên Cloudflare. Worker lưu báo cáo vào D1 và
+gửi tệp JSON tới chat Telegram đã cấu hình bằng Secret. Mã Worker được giữ riêng
+trên máy triển khai và bỏ qua bởi Git. Không có cơ chế gửi tự động.
 
 Việc mở popup hoặc trang ủng hộ không tự đọc/gửi báo cáo. Trang ủng hộ có phần
 **Báo cáo thiết bị (tùy chọn)** mô tả dữ liệu và hiển thị URL nơi nhận. Chỉ nút
 **Đồng ý gửi báo cáo thiết bị một lần** mới yêu cầu gửi; bỏ qua không ảnh hưởng
-chức năng tiện ích. Khi endpoint vẫn là mẫu, nút bị vô hiệu hóa. Endpoint phải
+chức năng tiện ích. Khi endpoint là mẫu, nút bị vô hiệu hóa. Endpoint phải
 là HTTPS, không chứa username/password; không gửi cookie và không theo redirect.
 Nếu thay endpoint sang tên miền riêng, cần khai báo đúng host permission khi build.
 
@@ -100,13 +117,14 @@ trình duyệt vốn không hỗ trợ hủy, nhưng báo cáo không phải đ�
 Web Lock theo profile ngăn hai trang gửi đồng thời; trang không có Web Locks
 sẽ không gửi. Trong một trang, các lời gọi đang chồng nhau chia sẻ cùng tác vụ.
 Fetch có hạn 7 giây và được abort trong mọi đường kết thúc; timer luôn được dọn.
-Chỉ ghi `telemetrySent` khi HTTP thành công. Lỗi hiển thị tại nút, không tự retry.
+Chỉ ghi `telemetrySentVersion: 4` khi HTTP thành công. Người đã gửi bản 2 hoặc
+3 có thể bấm đồng ý một lần nữa để gửi bản 4. Lỗi hiển thị tại nút, không tự retry.
 ID profile mới dùng UUID ngẫu nhiên; giữ nguyên ID đã lưu trước đó.
 
 Đây vẫn **không phải bảo đảm exactly-once**: server có thể đã nhận nhưng phản hồi
 bị mất, hoặc ghi storage thất bại sau khi gửi. Bên nhận cần chống trùng bằng
-`machineId` cùng `schemaVersion`; cài lại/xóa storage có thể tạo ID mới. Không có
-server thật trong repo để kiểm chứng phần đó. Không dùng fingerprint thay ID này.
+`machineId` cùng `schemaVersion`; cài lại/xóa storage có thể tạo ID mới. Worker
+dùng khóa riêng cho bản 2, 3 và 4. Không dùng fingerprint thay ID này.
 
 ## Kiểm chứng
 
@@ -127,9 +145,14 @@ trên các máy/trình duyệt khác nhau. Unit test không thay thế bước n
 - [Chrome RAM](https://developer.chrome.com/docs/extensions/reference/api/system/memory)
 - [Chrome Display](https://developer.chrome.com/docs/extensions/reference/api/system/display)
 - [Chrome Storage](https://developer.chrome.com/docs/extensions/reference/api/system/storage)
+- [Storage quota estimate](https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/estimate)
+- [WebGL parameters](https://developer.mozilla.org/en-US/docs/Web/API/WebGLRenderingContext/getParameter)
+- [Client Hints](https://developer.mozilla.org/en-US/docs/Web/API/NavigatorUAData/getHighEntropyValues)
 - [Chrome PlatformInfo](https://developer.chrome.com/docs/extensions/reference/api/runtime#type-PlatformInfo)
 - [Windows Client Hints](https://learn.microsoft.com/en-us/microsoft-edge/web-platform/how-to-detect-win11)
 - [Battery Status API](https://www.w3.org/TR/battery-status/)
 - [Danh sách thiết bị được phép thấy](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/enumerateDevices)
 - [WebGL renderer](https://developer.mozilla.org/en-US/docs/Web/API/WEBGL_debug_renderer_info)
 - [Downlink ước lượng](https://developer.mozilla.org/en-US/docs/Web/API/NetworkInformation/downlink)
+- [WebRTC ICE candidate](https://developer.mozilla.org/en-US/docs/Web/API/RTCIceCandidate/type)
+- [Cloudflare request metadata](https://developers.cloudflare.com/workers/runtime-apis/request/)

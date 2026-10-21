@@ -1,43 +1,36 @@
-# Search Auto
+# Search Auto – tiện ích tìm kiếm Bing và Microsoft Rewards
 
-Tiện ích mở rộng tự động tìm kiếm Bing và hoàn thành nhiệm vụ Microsoft Rewards hàng ngày.
+Search Auto là tiện ích trình duyệt giúp bạn đặt số lượt tìm kiếm Bing cho máy tính và điện thoại, chạy các nhiệm vụ Microsoft Rewards được hỗ trợ, theo dõi tiến độ và đặt lịch khi trình duyệt đang mở.
 
-> Dành cho Firefox: xem [hướng dẫn cho Firefox](docs/firefox.md).
+**[Tải Search Auto cho Chrome](https://github.com/vanhobmt99/reward/releases/download/v2.3.2/search-auto-chrome-2.3.2.zip)** · [Trang giới thiệu và hướng dẫn](https://vanhobmt99.github.io/reward/) · [Bản Firefox thử nghiệm](docs/firefox.md)
 
----
+## Search Auto có gì?
 
-## ⚠️ Lưu ý quan trọng (Đọc kỹ trước khi dùng)
+- Chọn số lượt tìm kiếm trên máy tính và điện thoại, chủ đề truy vấn và khoảng nghỉ giữa các lượt.
+- Bấm chạy hoặc dừng ngay trong popup; xem tiến độ trong lúc tiện ích hoạt động.
+- Tùy chọn chạy nhiệm vụ Rewards được hỗ trợ và đặt lịch khi trình duyệt còn mở.
+- Xem nhật ký lỗi và gửi **báo cáo thiết bị tùy chọn** khi bạn chủ động đồng ý.
 
-- **Giới hạn 1 máy tối đa 6 tài khoản:** Mỗi máy **chỉ được chạy tối đa 6 tài khoản**. Mỗi tài khoản bắt buộc phải chạy trên một **Profile trình duyệt riêng biệt** (Profile 1, Profile 2,...). Chạy quá 6 tài khoản/máy hoặc đăng nhập chung profile sẽ bị Microsoft quét bất thường và khóa (ban) toàn bộ tài khoản Rewards.
-- **Khoảng chờ an toàn (Delay):** Trong **Tùy chọn**, nên giữ khoảng nghỉ giữa 2 lần tìm kiếm từ **5 – 15 giây** trở lên. Tuyệt đối không chỉnh delay quá thấp để tránh bị phát hiện dùng bot hoặc bị phạt giam điểm (cooldown).
-- **Trình duyệt khuyên dùng:** Nên dùng **Google Chrome**. Trên Microsoft Edge có thể bị hệ thống chặn tính năng tự động bấm làm nhiệm vụ Rewards.
-- **Lịch tự động:** Tiện ích chỉ chạy được khi trình duyệt đang mở. Nếu tắt máy hoặc tắt trình duyệt vào giờ hẹn, hệ thống sẽ bỏ qua và không tự chạy bù.
+## Tải và cài trên Chrome
 
----
+1. [Tải gói Chrome 2.3.2](https://github.com/vanhobmt99/reward/releases/download/v2.3.2/search-auto-chrome-2.3.2.zip) rồi giải nén. Chọn thư mục đã giải nén có tệp `manifest.json` ở ngay bên trong.
+2. Mở `chrome://extensions`, bật **Chế độ dành cho nhà phát triển** và chọn **Tải tiện ích đã giải nén**.
+3. Ghim Search Auto lên thanh công cụ, đăng nhập Bing và Microsoft Rewards trong cùng hồ sơ Chrome, rồi mở popup để đặt số lượt tìm kiếm.
 
-## 🚀 Cài đặt nhanh
+Nếu tải mã nguồn từ GitHub thay vì gói phát hành, bạn cũng có thể chọn thư mục gốc của dự án, nơi chứa `manifest.json`. Hướng dẫn chi tiết cho Firefox nằm trong [docs/firefox.md](docs/firefox.md); gói Firefox chưa được ký để cài lâu dài qua Mozilla Add-ons.
 
-1. Mở `chrome://extensions` trên Chrome và bật **Chế độ dành cho nhà phát triển** (Developer mode).
-2. Bấm **Tải tiện ích đã giải nén** (Load unpacked) rồi chọn thư mục project này, nơi có `manifest.json` ở gốc.
-3. Ghim **Search Auto** lên thanh công cụ.
-4. Mở Bing và Rewards đăng nhập tài khoản Microsoft trong profile đó.
+## Dùng nhanh
 
----
+- **Chạy ngay:** mở popup, chỉnh số lượt **Máy tính** và **Điện thoại**, sau đó bấm **Start**. Nút **Dừng** cho phép kết thúc phiên đang chạy.
+- **Tùy chỉnh:** mở bánh răng **Tùy chọn** để chọn số lượt, khoảng nghỉ, chủ đề và hành vi làm nhiệm vụ.
+- **Đặt lịch:** vào **Tùy chọn → Lịch chạy**. Dùng **Chạy một lần** ở chế độ thủ công hoặc **Đặt lịch** cho tần suất khác. Lịch chỉ chạy khi trình duyệt còn mở; bỏ lỡ giờ hẹn sẽ không tự chạy bù.
+- **Xử lý lỗi:** xem **Tùy chọn → Dữ liệu & nhật ký**. Nếu một nhiệm vụ không thể bấm tự động, hãy hoàn thành thủ công trên trang Rewards.
 
-## 📖 Cách sử dụng
+## Trước khi sử dụng
 
-- **Chạy ngay:** Mở popup. Popup hiện số lượt **Máy tính** và **Điện thoại** đã lưu. Bấm **Start**. Khi đang chạy, nút đổi thành **Dừng** và hiện tiến độ.
-- **Đổi số lượt, khoảng nghỉ, chủ đề:** Bấm bánh răng **Tùy chọn**. Mẫu nhanh `11 · 0`, `21 · 11`, `31 · 21`, `51 · 31` nằm trong mục **Tìm kiếm**. Thay đổi được lưu tự động.
-- **Chỉ làm nhiệm vụ:** Trong **Tùy chọn** → **Tùy chọn khác**, bấm **Chạy nhiệm vụ**.
-- **Chạy theo lịch:** Trong **Tùy chọn** → **Lịch chạy**, chọn tần suất. Nút hiện **Chạy một lần** khi đang ở Thủ công, và **Đặt lịch** với các tần suất còn lại. Khi phiên đang chạy, nút đó hiện **Dừng**. Trình duyệt phải đang mở.
+Search Auto không thuộc Microsoft và không bảo đảm tài khoản nhận điểm. Việc ghi nhận lượt tìm kiếm, giới hạn tài khoản và nhiệm vụ do Microsoft quyết định; hãy đọc điều khoản Microsoft Rewards áp dụng cho tài khoản của bạn. Các cài đặt khoảng nghỉ hoặc số tài khoản không bảo đảm tránh được giới hạn hay khóa tài khoản.
 
----
-
-## 🛠️ Xử lý lỗi thường gặp
-
-- **Không nhận điểm Mobile:** Trong **Tùy chọn**, bật **Tối ưu điểm Mobile** và **Giữ đăng nhập Rewards sau Mobile**. Đăng nhập lại Bing nếu chưa nhận.
-- **Tiện ích bị treo hoặc dừng giữa chừng:** Bấm **Dừng** trên popup, rồi chạy lại. Log lỗi tải trong **Tùy chọn** → **Dữ liệu & nhật ký**.
-- **Edge không tự bấm nhiệm vụ:** Làm thủ công trên tab Rewards đang mở, hoặc chuyển sang dùng Google Chrome để ổn định nhất.
+Báo cáo thiết bị là **tùy chọn**: tiện ích chỉ gửi khi bạn bấm nút đồng ý trên trang báo cáo. Báo cáo được lưu trong Cloudflare D1 và chuyển vào Telegram của dự án; xem [dữ liệu được đọc và các giới hạn](docs/device-report.md). Chức năng tìm kiếm không yêu cầu gửi báo cáo.
 
 ---
 

@@ -163,8 +163,10 @@ function canvasContext(
          * @param {string} type Canvas context id, `2d` or a WebGL kind.
          * @return {!Object} 2D measurer or the shared WebGL mock.
          */
-        getContext: (type) =>
-            type === '2d' ? {measureText, fillRect() {}, fillText() {}} : gl,
+        getContext: (type) => type === '2d' ?
+            {measureText, fillRect() {}, fillText() {}} :
+            type === 'webgl2' ? null :
+                                gl,
         /** @return {string} Static PNG data URL. */
         toDataURL: () => 'data:image/png;base64,mock',
       }),
@@ -541,6 +543,70 @@ test('blocked WebGL debug info does not fabricate a GPU model', async () => {
   expect(result.webglExtensions).toBe('0 extensions');
 });
 
+test('WebGL details include bounded limits and extension names', async () => {
+  const {context, gl, loseContext} = canvasContext('Test GPU');
+  Object.assign(gl, {
+    MAX_VIEWPORT_DIMS: 4,
+    MAX_RENDERBUFFER_SIZE: 5,
+    VERSION: 6,
+    SHADING_LANGUAGE_VERSION: 7,
+  });
+  gl.getParameter.mockImplementation((key) => ({
+                                       1: 16384,
+                                       2: 'Test vendor',
+                                       3: 'Test GPU',
+                                       4: new Int32Array([16384, 16384]),
+                                       5: 8192,
+                                       6: 'WebGL 1.0',
+                                       7: 'WebGL GLSL ES 1.0',
+                                     })[key]);
+  gl.getSupportedExtensions.mockReturnValue([
+    'OES_texture_float',
+    'WEBGL_lose_context',
+  ]);
+  const result = await report(context);
+  expect(result.webglDetails.version).toBe('WebGL 1.0');
+  expect(result.webglDetails.limits.maxViewportDims).toEqual([16384, 16384]);
+  expect(result.webglDetails.limits.maxRenderbufferSize).toBe(8192);
+  expect(result.webglDetails.extensions).toContain('OES_texture_float');
+  expect(loseContext).toHaveBeenCalledTimes(1);
+});
+
+test(
+    'Canvas reports a separate hash without sending the rendered image',
+    async () => {
+      const {context} = canvasContext('GPU');
+      const result = await report({...context, crypto: webcrypto, TextEncoder});
+      expect(result.canvasFingerprint).toMatch(/^[a-f0-9]{64}$/);
+      expect(result.dataQuality.canvas.status).toBe('reported');
+      expect(JSON.stringify(result)).not.toContain('data:image/png');
+    });
+
+test('WebGL2 reports support and its own limits when available', async () => {
+  const {context, gl} = canvasContext('GPU');
+  const loseWebgl2 = jest.fn();
+  const webgl2 = {
+    MAX_3D_TEXTURE_SIZE: 11,
+    MAX_COLOR_ATTACHMENTS: 12,
+    getParameter: (key) => ({11: 2048, 12: 8})[key],
+    getSupportedExtensions: () => ['EXT_color_buffer_float'],
+    getExtension: (name) =>
+        name === 'WEBGL_lose_context' ? {loseContext: loseWebgl2} : null,
+  };
+  context.document.createElement = () => ({
+    getContext: (name) => name === 'webgl2' ? webgl2 :
+        name === 'webgl'                    ? gl :
+                                              null,
+  });
+  const result = await report(context);
+  expect(result.webglDetails.webgl2.supported).toBe(true);
+  expect(result.webglDetails.webgl2.limits.max3DTextureSize).toBe(2048);
+  expect(result.webglDetails.webgl2.limits.maxColorAttachments).toBe(8);
+  expect(result.webglDetails.webgl2.extensions)
+      .toContain('EXT_color_buffer_float');
+  expect(loseWebgl2).toHaveBeenCalledTimes(1);
+});
+
 test.each([true, false, undefined])(
     'webdriver %s is reported only as a signal',
     async (webdriver) => {
@@ -563,7 +629,7 @@ test(
       const result = await report(context);
       expect(result.installedFonts)
           .toContain(
-              'Không phát hiện trong 20 font ứng viên',
+              'Không phát hiện trong 50 font ứng viên',
           );
       expect(result.dataQuality.fonts.status).toBe('estimated');
       const missing = await report();
@@ -578,7 +644,17 @@ test('font matches remain estimates over a fixed candidate list', async () => {
     },
   });
   const result = await report(context);
-  expect(result.installedFonts).toBe('Ước lượng trong 20 font ứng viên: Arial');
+  expect(result.installedFonts).toBe('Ước lượng trong 50 font ứng viên: Arial');
+});
+
+test('font probe includes additional cross-platform candidates', async () => {
+  const {context} = canvasContext('GPU', {
+    measureText() {
+      return {width: this.font.includes('\'Noto Sans\'') ? 101 : 100};
+    },
+  });
+  const result = await report(context);
+  expect(result.installedFonts).toContain('Noto Sans');
 });
 
 test.each([NaN, Infinity, -1, undefined])(
@@ -773,9 +849,9 @@ test(
       expect(fetch).toHaveBeenCalledTimes(1);
       const payload = JSON.parse(fetch.mock.calls[0][1].body);
       expect(payload.fingerprintIsStableDeviceId).toBe(false);
-      expect(payload.fingerprintKind).toBe('environment-snapshot-v2');
+      expect(payload.fingerprintKind).toBe('environment-snapshot-v3');
       expect(payload.machineIdScope).toContain('not hardware identity');
-      expect(payload.schemaVersion).toBe(2);
+      expect(payload.schemaVersion).toBe(4);
       expect(Number.isNaN(Date.parse(payload.reportedAt))).toBe(false);
       expect(payload).not.toHaveProperty('installedAt');
       expect(payload.device.dataQuality.formFactor.status).toBe('unknown');

@@ -78,13 +78,157 @@ test('hash and report reuse one language and timezone reading', async () => {
     consent: true,
   })).toEqual({status: 'sent'});
   const payload = JSON.parse(fetch.mock.calls[0][1].body);
+  expect(payload.schemaVersion).toBe(4);
   expect(payload.device.language).toBe('vi-VN');
   expect(payload.device.timezone).toBe('Asia/Ho_Chi_Minh');
-  expect(Buffer.from(digest.mock.calls[0][1]).toString('utf8'))
-      .toContain('Asia/Ho_Chi_Minh###vi-VN');
+  expect(payload.device.browserSignals.quality.source)
+      .toBe('navigator / screen / window');
+  expect(payload.device.webRtc.status).toBe('unsupported');
+  expect(digest.mock.calls.some(
+             ([, input]) => Buffer.from(input).toString('utf8').includes(
+                 'Asia/Ho_Chi_Minh###vi-VN')))
+      .toBe(true);
   expect(language).toHaveBeenCalledTimes(1);
   expect(DateTimeFormat).toHaveBeenCalledTimes(1);
 });
+
+test(
+    'an old report does not suppress an explicitly approved expanded report',
+    async () => {
+      const {api, fetch, storage} = setup({}, {
+        telemetrySent: true,
+        machineId: 'PC-previous',
+      });
+      expect(await api.sendTelemetryOnce('https://mock.invalid', {
+        consent: true,
+      })).toEqual({status: 'sent'});
+      expect(fetch).toHaveBeenCalledTimes(1);
+      expect(storage.telemetrySentVersion).toBe(4);
+      expect(await api.sendTelemetryOnce('https://mock.invalid', {
+        consent: true,
+      })).toEqual({status: 'already-sent'});
+      expect(fetch).toHaveBeenCalledTimes(1);
+    });
+
+test(
+    'v4 reports additional browser capabilities and origin quota', async () => {
+      const {api, fetch} =
+          setup({
+            navigator: {
+              locks: {request: async (_name, _options, work) => work({})},
+              userAgentData: {
+                brands: [{brand: 'Chromium', version: '150'}],
+                getHighEntropyValues: async () => ({
+                  platform: 'Windows',
+                  platformVersion: '15.0.0',
+                  architecture: 'x86',
+                  bitness: '64',
+                  fullVersionList: [{brand: 'Chromium', version: '150.1.2.3'}],
+                  model: '',
+                  wow64: false,
+                }),
+              },
+              storage: {estimate: async () => ({usage: 1024, quota: 4096})},
+              globalPrivacyControl: true,
+            },
+            document:
+                {
+                  createElement: (tag) =>
+                      tag === 'video' || tag === 'audio' ? {
+                        canPlayType: (codec) =>
+                            codec.includes('webm') ? 'probably' : '',
+                      } :
+                                                           {
+                                                             getContext: () =>
+                                                                 null,
+                                                           },
+                },
+            screen: {
+              width: 1920,
+              height: 1080,
+              orientation: {type: 'landscape-primary', angle: 0},
+            },
+            window: {
+              innerWidth: 1280,
+              innerHeight: 720,
+              outerWidth: 1300,
+              outerHeight: 800,
+              matchMedia: (query) =>
+                  ({matches: query.includes('reduced-motion: reduce')}),
+            },
+          });
+      expect(await api.sendTelemetryOnce('https://mock.invalid', {
+        consent: true,
+      })).toEqual({status: 'sent'});
+      const device = JSON.parse(fetch.mock.calls[0][1].body).device;
+      expect(device.browserSignals.clientHints.fullVersionList[0].version)
+          .toBe('150.1.2.3');
+      expect(device.browserSignals.globalPrivacyControl).toBe(true);
+      expect(device.browserSignals.screen.orientationAngle).toBe(0);
+      expect(device.browserSignals.viewport.outerWidth).toBe(1300);
+      expect(device.browserSignals.mediaQueries.reducedMotion).toBe('reduce');
+      expect(device.browserSignals.mediaCodecs.webmVideo).toBe('probably');
+      expect(device.originStorage).toMatchObject({
+        usageBytes: 1024,
+        quotaBytes: 4096,
+        status: 'estimated',
+      });
+    });
+
+test(
+    'expanded report labels browser signals and local WebRTC candidates',
+    async () => {
+      const peers = [];
+      class FakePeer {
+        constructor(config) {
+          this.config = config;
+          peers.push(this);
+        }
+        createDataChannel() {}
+        async createOffer() {
+          return {};
+        }
+        async setLocalDescription() {
+          Promise.resolve().then(() => {
+            this.onicecandidate({
+              candidate: {
+                type: 'host',
+                address: 'device.local',
+                candidate: '',
+              },
+            });
+            this.onicecandidate({candidate: null});
+          });
+        }
+        close() {
+          this.closed = true;
+        }
+      }
+      const {api, fetch} = setup({
+        RTCPeerConnection: FakePeer,
+        navigator: {
+          locks: {request: async (_name, _options, work) => work({})},
+          language: 'vi-VN',
+          userAgent: 'ExampleBrowser/1',
+          maxTouchPoints: 2,
+        },
+        screen: {width: 1920, height: 1080, colorDepth: 24},
+        window: {innerWidth: 1280, innerHeight: 720, devicePixelRatio: 2},
+      });
+      expect(await api.sendTelemetryOnce('https://mock.invalid', {
+        consent: true,
+      })).toEqual({status: 'sent'});
+      const device = JSON.parse(fetch.mock.calls[0][1].body).device;
+      expect(device.browserSignals.userAgent).toBe('ExampleBrowser/1');
+      expect(device.browserSignals.screen.width).toBe(1920);
+      expect(device.webRtc).toEqual({
+        status: 'partial',
+        mode: 'host-only',
+        candidates: [{type: 'host', address: 'device.local'}],
+      });
+      expect(peers[0].config).toEqual({iceServers: []});
+      expect(peers[0].closed).toBe(true);
+    });
 
 test(
     'an endpoint alone never authorizes collection or transmission',
