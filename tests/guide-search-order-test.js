@@ -83,8 +83,8 @@ describe('user guides and search-first order', () => {
     expect(readme).toContain('**Tùy chọn**');
     expect(readme).toContain('**Chạy một lần**');
     expect(readme).toContain('**Đặt lịch**');
-    expect(readme).toContain('dist/firefox/manifest.json');
-    expect(readme).toContain('npm.cmd run build:firefox');
+    expect(readme).not.toContain('npm.cmd run build:firefox');
+    expect(readme).not.toContain('dist/firefox/manifest.json');
 
     const firefox = readRepo('docs/firefox.md');
     expect(firefox).toContain('npm.cmd run build:firefox');

@@ -18,7 +18,7 @@ Tiện ích mở rộng tự động tìm kiếm Bing và hoàn thành nhiệm v
 ## 🚀 Cài đặt nhanh
 
 1. Mở `chrome://extensions` trên Chrome và bật **Chế độ dành cho nhà phát triển** (Developer mode).
-2. Bấm **Tải tiện ích đã giải nén** (Load unpacked) rồi chọn thư mục project này.
+2. Bấm **Tải tiện ích đã giải nén** (Load unpacked) rồi chọn thư mục project này, nơi có `manifest.json` ở gốc.
 3. Ghim **Search Auto** lên thanh công cụ.
 4. Mở Bing và Rewards đăng nhập tài khoản Microsoft trong profile đó.
 
@@ -41,46 +41,33 @@ Tiện ích mở rộng tự động tìm kiếm Bing và hoàn thành nhiệm v
 
 ---
 
-## Báo cáo thiết bị
-
-Trong trang ủng hộ có nút gửi báo cáo thiết bị **tùy chọn**, kèm mô tả dữ liệu
-và nơi nhận. Mở popup hoặc cài tiện ích không tự gửi báo cáo. Endpoint mẫu chưa
-được cấu hình nên bản mặc định không gửi. Xem [phạm vi, độ chính xác và giới hạn
-báo cáo](docs/device-report.md).
-
-## Phát triển và dựng bản
-
-```powershell
-npm.cmd ci
-npm.cmd run lint
-npm.cmd run format:check
-npm.cmd run audit:types
-npm.cmd test -- --runInBand
-npm.cmd run test:claim
-npm.cmd run test:firefox
-npm.cmd run build:chrome
-npm.cmd run build:firefox
-```
-
-JavaScript dùng `clang-format` với cấu hình Google và kiểm tra AST để từ chối
-thay đổi cấu trúc chương trình do formatter. JSON/HTML/CSS/Markdown dùng Prettier.
-Chạy `npm.cmd run format` để định dạng lại. Quy ước nằm trong
-[quy ước JavaScript](docs/google-style.md).
-`audit:types` liệt kê các hàm/phương thức thiếu chú thích kiểu; thêm `-- --check`
-để trả mã lỗi khi còn thiếu. Công cụ này chưa kiểm chứng tính đúng của từng kiểu.
-
-`test:claim` chạy các fixture cục bộ và bản Chrome trong profile thử riêng;
-`test:firefox` cần Firefox đã cài (hoặc biến `FIREFOX_BINARY`). Các bài smoke
-không sử dụng tài khoản thật. Chrome cài unpacked từ thư mục project, nơi có
-`manifest.json` ở gốc. `npm.cmd run build:chrome` và `npm.cmd run build:firefox` tạo `dist/chrome`
-và `dist/firefox`. Firefox cài tạm bằng `dist/firefox/manifest.json`. Bản dựng
-chỉ chứa tài nguyên chạy, không chứa test, dependency, bản sao nguồn hay tài liệu
-nội bộ.
-
 ## ☕ Ủng hộ tác giả
 
-Nếu tiện ích hữu ích cho bạn, hãy [tặng 1 sao trên GitHub](https://github.com/vanhobmt99/reward) hoặc ủng hộ tác giả qua:
+<p align="center">
+Nếu tiện ích hữu ích cho bạn, hãy
+<a href="https://github.com/vanhobmt99/reward">tặng 1 sao trên GitHub</a>
+hoặc ủng hộ tác giả qua:
+</p>
 
-|                                              Vietcombank                                               |                                         MoMo                                          |
-| :----------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------: |
-| <img src="docs/vietcombank.png" alt="Vietcombank" width="180" /><br>**HO VIET VAN**<br>`0231000639001` | <img src="docs/momo.jpg" alt="MoMo" width="180" /><br>**HO VIET VAN**<br>`0326363942` |
+<table align="center">
+  <thead>
+    <tr>
+      <th align="center">Vietcombank</th>
+      <th align="center">MoMo</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td align="center">
+        <img src="docs/vietcombank.png" alt="Vietcombank" width="360" /><br />
+        <strong>HO VIET VAN</strong><br />
+        <code>0231000639001</code>
+      </td>
+      <td align="center">
+        <img src="docs/momo.jpg" alt="MoMo" width="360" /><br />
+        <strong>HO VIET VAN</strong><br />
+        <code>0326363942</code>
+      </td>
+    </tr>
+  </tbody>
+</table>
