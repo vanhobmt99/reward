@@ -40,7 +40,11 @@
     "history",
     "debugger",
     "cookies",
-    "notifications"
+    "notifications",
+    "system.cpu",
+    "system.memory",
+    "system.display",
+    "system.storage"
   ],
   "host_permissions": [
     "*://*.bing.com/*",
@@ -49,7 +53,8 @@
     "*://login.live.com/*",
     "*://login.microsoftonline.com/*",
     "*://account.microsoft.com/*",
-    "*://rewards.bing.com/*"
+    "*://rewards.bing.com/*",
+    "https://*.workers.dev/*"
   ],
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'self';"

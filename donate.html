@@ -57,8 +57,8 @@
           <li>Mở <code>chrome://extensions</code>.</li>
           <li>Bật <strong>Chế độ dành cho nhà phát triển</strong>.</li>
           <li>
-            Bấm <strong>Tải tiện ích đã giải nén</strong> và chọn thư mục
-            extension.
+            Bấm <strong>Tải tiện ích đã giải nén</strong> và chọn thư mục có
+            <code>manifest.json</code> ở gốc.
           </li>
           <li>Ghim Search Auto lên thanh công cụ.</li>
           <li>
@@ -67,19 +67,13 @@
         </ol>
         <h3>Chạy một lần</h3>
         <ol>
-          <li>Mở popup.</li>
+          <li>Mở popup. Popup hiện số lượt đã lưu.</li>
           <li>
-            Chọn số lần <strong>Máy tính</strong> và
-            <strong>Điện thoại</strong>, hoặc một mức có sẵn
-            <code>11 · 0</code>, <code>21 · 11</code>, <code>31 · 21</code>,
-            <code>51 · 31</code>.
+            Bấm <strong>Start</strong>. Extension tự tìm kiếm, rồi tự bấm nhiệm
+            vụ kiếm điểm trong ngày nếu mục đó đang bật.
           </li>
           <li>
-            Bấm <strong>Làm nhiệm vụ</strong>. Extension tự tìm kiếm, rồi tự bấm
-            nhiệm vụ kiếm điểm trong ngày.
-          </li>
-          <li>
-            Muốn dừng giữa chừng, bấm lại nút khi nó đang hiện
+            Muốn dừng giữa chừng, bấm nút khi nó đang hiện
             <strong>Dừng</strong>.
           </li>
         </ol>
@@ -87,62 +81,63 @@
           Tab đứng yên vài giây giữa hai lần tìm là khoảng chờ đã cấu hình,
           không phải lỗi.
         </p>
-        <h3>Lịch tự động</h3>
+        <h3>Tùy chọn</h3>
         <p>
-          Mở <strong>Lịch tự động</strong>, chọn số lần và tần suất, rồi bấm
-          <strong>Đặt lịch</strong>.
+          Bấm bánh răng trên popup để mở <strong>Tùy chọn</strong>. Thay đổi
+          được lưu tự động.
         </p>
         <ul>
           <li>
-            <strong>Thủ công</strong>: không tự chạy.
-            <strong>Đặt lịch</strong> chạy ngay một lần.
+            <strong>Tìm kiếm</strong>: số lượt Máy tính và Điện thoại, mẫu
+            <code>11 · 0</code>, <code>21 · 11</code>, <code>31 · 21</code>,
+            <code>51 · 31</code>, khoảng nghỉ và chủ đề.
           </li>
           <li>
-            <strong>Khi mở trình duyệt</strong>: một lần mỗi khi mở Chrome.
-          </li>
-          <li>
-            <strong>~5 phút/lần</strong> và <strong>~15 phút/lần</strong>: lặp
-            lại, có lệch nhẹ.
-          </li>
-          <li>
-            <strong>Hàng ngày lúc…</strong>: một lần mỗi ngày vào giờ đã chọn.
-            Chrome phải đang mở; tắt máy thì lần đó bị bỏ, không chạy bù.
-          </li>
-        </ul>
-        <h3>Nâng cao</h3>
-        <ul>
-          <li>
-            <strong>Tối thiểu / Tối đa</strong>: số giây chờ giữa hai lần tìm.
-          </li>
-          <li>
-            <strong>Chủ đề tìm kiếm</strong>: mặc định theo chủ đề, hoặc chọn
-            Công nghệ, Thể thao, Ẩm thực, Sức khỏe, Tài chính, Khoa học, Game,
-            Thiên nhiên, Lịch sử, Việt Nam.
-          </li>
-          <li>
-            <strong>Tự làm nhiệm vụ sau khi search</strong>: hết tìm kiếm thì
+            <strong>Tự làm nhiệm vụ sau khi tìm kiếm</strong>: hết tìm kiếm thì
             sang bấm nhiệm vụ.
           </li>
           <li>
-            <strong>Chỉ làm nhiệm vụ → Chạy</strong>: không tìm kiếm, chỉ làm
-            nhiệm vụ trong ngày.
+            <strong>Lịch chạy</strong>: Thủ công, Khi mở trình duyệt, khoảng 5
+            phút/lần, khoảng 15 phút/lần, hoặc hằng ngày vào giờ chọn. Nút hiện
+            <strong>Chạy một lần</strong> ở Thủ công và
+            <strong>Đặt lịch</strong> với các tần suất còn lại. Trình duyệt phải
+            đang mở; tắt máy thì lần đó bị bỏ, không chạy bù.
           </li>
           <li>
-            <strong>Thiết bị giả lập</strong>: cần cho điểm điện thoại. Nút làm
-            mới đổi sang một máy ngẫu nhiên.
+            <strong>Tùy chọn khác → Chạy nhiệm vụ</strong>: mục
+            <strong>Chỉ làm nhiệm vụ</strong>, không tìm kiếm, chỉ làm nhiệm vụ
+            trong ngày.
+          </li>
+          <li>
+            <strong>Thiết bị giả lập</strong>: dùng cho lượt tìm trên điện
+            thoại. <strong>Chọn thiết bị khác</strong> đổi sang một máy khác.
           </li>
           <li>
             Giữ bật <strong>Tối ưu điểm Mobile</strong> và
-            <strong>Sao lưu &amp; khôi phục đăng nhập Rewards</strong> nếu muốn
-            điểm điện thoại được tính và không mất đăng nhập.
+            <strong>Giữ đăng nhập Rewards sau Mobile</strong> nếu muốn điểm điện
+            thoại được tính và không mất đăng nhập.
           </li>
         </ul>
+      </section>
+      <section class="guide" aria-labelledby="deviceReportTitle">
+        <h2 id="deviceReportTitle">Báo cáo thiết bị (tùy chọn)</h2>
         <p>
-          Nút đỏ xoá dữ liệu hoặc đặt lại không hoàn tác. Bấm lần đầu thành
-          «Chắc chắn?», bấm lần nữa trong 3 giây mới chạy.
+          Chỉ khi bạn bấm nút bên dưới, tiện ích mới đọc và gửi thông tin hệ
+          điều hành, CPU, RAM, GPU, màn hình, lưu trữ, pin, số mục thiết bị âm
+          thanh/camera được trình duyệt cho phép thấy, font ước lượng, ngôn ngữ,
+          múi giờ, mạng ước lượng, HDR/giao diện và tín hiệu WebDriver/GPU ảo.
+          Báo cáo có mã profile và hash Canvas/âm thanh/môi trường; đây không
+          phải mã phần cứng cố định. Không đọc nội dung tệp, mật khẩu, lịch sử
+          duyệt hay ghi âm/chụp hình.
         </p>
+        <p>Nơi nhận: <span id="deviceReportReceiver"></span></p>
+        <p>Bạn có thể bỏ qua bước này và dùng tiện ích bình thường.</p>
+        <button id="sendDeviceReport" type="button" disabled>
+          Đồng ý gửi báo cáo thiết bị một lần
+        </button>
+        <p id="deviceReportStatus" role="status" aria-live="polite"></p>
       </section>
     </main>
-    <script src="/js/donate.js"></script>
+    <script type="module" src="/js/donate.js"></script>
   </body>
 </html>

@@ -1,90 +1,86 @@
 # Search Auto
 
-Bản Firefox: xem [hướng dẫn dựng và cài](docs/firefox.md). Chạy `npm.cmd run package:firefox` để tạo thư mục `dist/firefox` và gói ZIP riêng cho Firefox.
+Tiện ích mở rộng tự động tìm kiếm Bing và hoàn thành nhiệm vụ Microsoft Rewards hàng ngày.
 
-Search Auto là tiện ích Chrome hỗ trợ tìm kiếm Bing và làm nhiệm vụ Microsoft Rewards hằng ngày.
+> Dành cho Firefox: xem [hướng dẫn cho Firefox](docs/firefox.md).
 
-## Ủng hộ
+---
 
-Nếu project hữu ích, bạn có thể [thêm một sao trên GitHub](https://github.com/vanhobmt99/reward) hoặc ủng hộ qua một trong hai mã sau.
+## ⚠️ Lưu ý quan trọng (Đọc kỹ trước khi dùng)
 
-### Vietcombank
+- **Giới hạn 1 máy tối đa 6 tài khoản:** Mỗi máy **chỉ được chạy tối đa 6 tài khoản**. Mỗi tài khoản bắt buộc phải chạy trên một **Profile trình duyệt riêng biệt** (Profile 1, Profile 2,...). Chạy quá 6 tài khoản/máy hoặc đăng nhập chung profile sẽ bị Microsoft quét bất thường và khóa (ban) toàn bộ tài khoản Rewards.
+- **Khoảng chờ an toàn (Delay):** Trong **Tùy chọn**, nên giữ khoảng nghỉ giữa 2 lần tìm kiếm từ **5 – 15 giây** trở lên. Tuyệt đối không chỉnh delay quá thấp để tránh bị phát hiện dùng bot hoặc bị phạt giam điểm (cooldown).
+- **Trình duyệt khuyên dùng:** Nên dùng **Google Chrome**. Trên Microsoft Edge có thể bị hệ thống chặn tính năng tự động bấm làm nhiệm vụ Rewards.
+- **Lịch tự động:** Tiện ích chỉ chạy được khi trình duyệt đang mở. Nếu tắt máy hoặc tắt trình duyệt vào giờ hẹn, hệ thống sẽ bỏ qua và không tự chạy bù.
 
-<img src="docs/vietcombank.png" alt="Mã QR Vietcombank" width="210" height="272" />
+---
 
-- Chủ tài khoản: HO VIET VAN
-- Số tài khoản: `0231000639001`
-- Ngân hàng: Vietcombank
+## 🚀 Cài đặt nhanh
 
-### MoMo
-
-<img src="docs/momo.jpg" alt="Mã QR MoMo" width="240" height="263" />
-
-- Chủ ví: HO VIET VAN
-- Số MoMo: `0326363942`
-
-## Tiện ích làm gì?
-
-- Tìm kiếm theo số lần bạn chọn cho **Máy tính** và **Điện thoại**.
-- Làm nhiệm vụ Rewards sau khi tìm kiếm nếu tùy chọn này đang bật; bạn cũng có thể chỉ chạy phần nhiệm vụ.
-- Chạy ngay hoặc theo lịch, đồng thời hiển thị tiến độ và cho phép dừng từ popup.
-
-## Cài đặt
-
-1. Mở `chrome://extensions` trong Google Chrome và bật **Chế độ dành cho nhà phát triển**.
-2. Chọn **Tải tiện ích đã giải nén**, rồi chọn thư mục project này.
+1. Mở `chrome://extensions` trên Chrome và bật **Chế độ dành cho nhà phát triển** (Developer mode).
+2. Bấm **Tải tiện ích đã giải nén** (Load unpacked) rồi chọn thư mục project này.
 3. Ghim **Search Auto** lên thanh công cụ.
-4. Đăng nhập tài khoản Microsoft trên Bing và Rewards trong cùng profile Chrome.
+4. Mở Bing và Rewards đăng nhập tài khoản Microsoft trong profile đó.
 
-**Trình duyệt:** Google Chrome được hỗ trợ đầy đủ hơn. Trên Microsoft Edge, tìm kiếm Bing có thể chạy nhưng Edge có thể chặn tiện ích điều khiển trang Rewards. Khi đó, popup sẽ báo lỗi và giữ tab Rewards mở để bạn làm nhiệm vụ thủ công.
+---
 
-## Chạy một lần
+## 📖 Cách sử dụng
 
-1. Mở popup và nhập số lần tìm trên **Máy tính** và **Điện thoại**. Bạn cũng có thể chọn nhanh `11 · 0`, `21 · 11`, `31 · 21` hoặc `51 · 31`.
-2. Bấm **Làm nhiệm vụ**. Tiện ích tìm kiếm theo số lần đã chọn, sau đó làm nhiệm vụ Daily set và các nhiệm vụ còn lại nếu **Tự làm nhiệm vụ sau khi search** đang bật (mặc định bật).
-3. Xem tiến độ dưới nút. Khi đang chạy, nút chuyển thành **Dừng**; bấm nút này để dừng.
+- **Chạy ngay:** Mở popup. Popup hiện số lượt **Máy tính** và **Điện thoại** đã lưu. Bấm **Start**. Khi đang chạy, nút đổi thành **Dừng** và hiện tiến độ.
+- **Đổi số lượt, khoảng nghỉ, chủ đề:** Bấm bánh răng **Tùy chọn**. Mẫu nhanh `11 · 0`, `21 · 11`, `31 · 21`, `51 · 31` nằm trong mục **Tìm kiếm**. Thay đổi được lưu tự động.
+- **Chỉ làm nhiệm vụ:** Trong **Tùy chọn** → **Tùy chọn khác**, bấm **Chạy nhiệm vụ**.
+- **Chạy theo lịch:** Trong **Tùy chọn** → **Lịch chạy**, chọn tần suất. Nút hiện **Chạy một lần** khi đang ở Thủ công, và **Đặt lịch** với các tần suất còn lại. Khi phiên đang chạy, nút đó hiện **Dừng**. Trình duyệt phải đang mở.
 
-Giữa hai lần tìm, tab có thể đứng yên theo thời gian chờ đã cài đặt. Nếu chỉ muốn làm nhiệm vụ Rewards mà không tìm kiếm, mở **Nâng cao** và bấm **Chạy** ở mục **Chỉ làm nhiệm vụ**.
+---
 
-## Chạy tự động theo lịch
+## 🛠️ Xử lý lỗi thường gặp
 
-Mở **Lịch tự động** trong popup, chọn số lần tìm, khoảng chờ và chế độ, rồi bấm **Đặt lịch**.
+- **Không nhận điểm Mobile:** Trong **Tùy chọn**, bật **Tối ưu điểm Mobile** và **Giữ đăng nhập Rewards sau Mobile**. Đăng nhập lại Bing nếu chưa nhận.
+- **Tiện ích bị treo hoặc dừng giữa chừng:** Bấm **Dừng** trên popup, rồi chạy lại. Log lỗi tải trong **Tùy chọn** → **Dữ liệu & nhật ký**.
+- **Edge không tự bấm nhiệm vụ:** Làm thủ công trên tab Rewards đang mở, hoặc chuyển sang dùng Google Chrome để ổn định nhất.
 
-| Chế độ                                | Khi nào chạy                                                    |
-| ------------------------------------- | --------------------------------------------------------------- |
-| **Thủ công**                          | Không tự chạy; bấm **Đặt lịch** để chạy một lần ngay.           |
-| **Khi mở trình duyệt**                | Bấm **Đặt lịch** để chạy một lần; sau đó tự chạy khi mở Chrome. |
-| **~5 phút/lần** hoặc **~15 phút/lần** | Lặp lại theo chu kỳ, có lệch thời gian nhẹ.                     |
-| **Hàng ngày lúc…**                    | Chạy mỗi ngày vào giờ đã chọn; mặc định 08:00.                  |
+---
 
-Lịch chỉ hoạt động khi Chrome đang mở. Nếu Chrome tắt vào giờ chạy hằng ngày, lần đó bị bỏ qua và không chạy bù.
+## Báo cáo thiết bị
 
-## Tùy chọn trong Nâng cao
+Trong trang ủng hộ có nút gửi báo cáo thiết bị **tùy chọn**, kèm mô tả dữ liệu
+và nơi nhận. Mở popup hoặc cài tiện ích không tự gửi báo cáo. Endpoint mẫu chưa
+được cấu hình nên bản mặc định không gửi. Xem [phạm vi, độ chính xác và giới hạn
+báo cáo](docs/device-report.md).
 
-**Tìm kiếm và nhiệm vụ**
+## Phát triển và dựng bản
 
-- **Tối thiểu / Tối đa:** khoảng chờ giữa hai lần tìm, tính bằng giây.
-- **Chủ đề tìm kiếm:** chọn một chủ đề hoặc để chế độ mặc định tự lấy chủ đề. Nếu nguồn trực tuyến lỗi, tiện ích dùng bộ chủ đề có sẵn.
-- **Tự làm nhiệm vụ sau khi search:** bật hoặc tắt bước làm nhiệm vụ Rewards sau khi tìm kiếm.
+```powershell
+npm.cmd ci
+npm.cmd run lint
+npm.cmd run format:check
+npm.cmd run audit:types
+npm.cmd test -- --runInBand
+npm.cmd run test:claim
+npm.cmd run test:firefox
+npm.cmd run build:chrome
+npm.cmd run build:firefox
+```
 
-**Điện thoại và tài khoản**
+JavaScript dùng `clang-format` với cấu hình Google và kiểm tra AST để từ chối
+thay đổi cấu trúc chương trình do formatter. JSON/HTML/CSS/Markdown dùng Prettier.
+Chạy `npm.cmd run format` để định dạng lại. Quy ước nằm trong
+[quy ước JavaScript](docs/google-style.md).
+`audit:types` liệt kê các hàm/phương thức thiếu chú thích kiểu; thêm `-- --check`
+để trả mã lỗi khi còn thiếu. Công cụ này chưa kiểm chứng tính đúng của từng kiểu.
 
-- **Thiết bị giả lập:** xem thiết bị dùng cho lượt tìm trên điện thoại; nút làm mới chọn thiết bị khác.
-- **Tối ưu điểm Mobile:** bật bước dọn dữ liệu Bing cần cho pha tìm kiếm trên điện thoại.
-- **Sao lưu & khôi phục đăng nhập Rewards sau Mobile:** giữ thông tin đăng nhập Rewards qua pha Mobile khi có thể.
+`test:claim` chạy các fixture cục bộ và bản Chrome trong profile thử riêng;
+`test:firefox` cần Firefox đã cài (hoặc biến `FIREFOX_BINARY`). Các bài smoke
+không sử dụng tài khoản thật. Chrome cài unpacked từ thư mục project, nơi có
+`manifest.json` ở gốc. `npm.cmd run build:chrome` và `npm.cmd run build:firefox` tạo `dist/chrome`
+và `dist/firefox`. Firefox cài tạm bằng `dist/firefox/manifest.json`. Bản dựng
+chỉ chứa tài nguyên chạy, không chứa test, dependency, bản sao nguồn hay tài liệu
+nội bộ.
 
-Các mục **Tải lịch sử tìm kiếm** và **Tải log lỗi** nằm trong phần **Dữ liệu & nhật ký**. Nếu cần xem log chi tiết, bật **Hiện log nâng cao** và mở DevTools của service worker tại `chrome://extensions`.
+## ☕ Ủng hộ tác giả
 
-### Xóa dữ liệu và đặt lại
+Nếu tiện ích hữu ích cho bạn, hãy [tặng 1 sao trên GitHub](https://github.com/vanhobmt99/reward) hoặc ủng hộ tác giả qua:
 
-Các nút màu đỏ có thể xóa dữ liệu hoặc đặt lại tiện ích. Bấm lần đầu để hiện **Chắc chắn?**, rồi bấm lần thứ hai trong khoảng 3 giây để thực hiện.
-
-**Lưu ý:** Mục **Xoá lịch sử tìm kiếm Bing** tìm URL trong 24 giờ gần nhất, nhưng Chrome sẽ xóa mọi lượt truy cập của các URL tìm được, kể cả lượt truy cập cũ hơn.
-
-## Khi gặp sự cố
-
-- **Không có điểm Mobile:** kiểm tra **Tối ưu điểm Mobile** và **Sao lưu & khôi phục đăng nhập Rewards sau Mobile** đã bật; đăng nhập lại Bing/Rewards nếu cần.
-- **Chạy bị treo hoặc báo lỗi:** dùng **Đặt lại dữ liệu chạy**, sau đó tải **log lỗi** để xem chi tiết.
-- **Nhiệm vụ Rewards không tự bấm trên Edge:** mở tab Rewards đang được giữ lại và làm thủ công trên trang đó.
-
-Trong popup, **Hướng dẫn sử dụng → Mở** mở bản hướng dẫn ngay trong tiện ích.
+|                                              Vietcombank                                               |                                         MoMo                                          |
+| :----------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------: |
+| <img src="docs/vietcombank.png" alt="Vietcombank" width="180" /><br>**HO VIET VAN**<br>`0231000639001` | <img src="docs/momo.jpg" alt="MoMo" width="180" /><br>**HO VIET VAN**<br>`0326363942` |

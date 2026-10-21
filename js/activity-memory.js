@@ -15,6 +15,19 @@
  * (slow-scoring points, a raced tab), not evidence the card is dead.
  */
 
+/**
+ * @typedef {{confirmed: (!Object<string, (boolean|number|null|undefined)>|
+ * undefined), attempts: (!Object<string, number>|undefined)}}
+ *     ActivityMemoryInput
+ */
+/**
+ * @typedef {{confirmed: !Object<string, boolean>,
+ *     attempts: !Object<string, number>}} ActivityMemory
+ */
+/**
+ * @typedef {{maxFailedAttempts: (number|undefined)}} ActivityBlockOptions
+ */
+
 // Failures tolerated across the whole day before a card is left alone. Higher
 // than the per-session miss limit on purpose: a card can legitimately miss a
 // whole run (points registering late, a transient network error) and still be
@@ -29,23 +42,36 @@ export const MAX_FAILED_ACTIVITY_ATTEMPTS = 4;
 // so their daily confirmation was dropped on every load and the card was then
 // clicked again in the next run.
 const EXPAND_ATTEMPT_PATTERN =
-  /^(?:[a-z-]+\|)?\s*(earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng)\s*$/i;
+    /^(?:[a-z-]+\|)?\s*(earn more|show more|see more|view all|load more|more activities|expand|kiếm thêm|xem thêm|hiển thị thêm|mở rộng)\s*$/i;
 
+/**
+ * Drops expand and see-more keys from the failure ledger.
+ * @param {?Object<string, number>} attempts Stored failure counts, or null.
+ * @return {!Object<string, number>} Counts whose keys are real activities.
+ */
 export function sanitizeActivityAttempts(attempts) {
   return Object.fromEntries(
-    Object.entries(attempts || {}).filter(
-      ([key]) => !EXPAND_ATTEMPT_PATTERN.test(key),
-    ),
+      Object.entries(attempts || {})
+          .filter(
+              ([key]) => !EXPAND_ATTEMPT_PATTERN.test(key),
+              ),
   );
 }
 
+/**
+ * Drops expand keys and falsey entries, and stores each survivor as true.
+ * @param {?Object<string, (boolean|number|null|undefined)>} confirmed Stored
+ *     confirmation flags, or null.
+ * @return {!Object<string, boolean>} Keys confirmed for the rest of the day.
+ */
 export function sanitizeActivityConfirmed(confirmed) {
   return Object.fromEntries(
-    Object.entries(confirmed || {})
-      .filter(
-        ([key, value]) => Boolean(value) && !EXPAND_ATTEMPT_PATTERN.test(key),
-      )
-      .map(([key]) => [key, true]),
+      Object.entries(confirmed || {})
+          .filter(
+              ([key, value]) =>
+                  Boolean(value) && !EXPAND_ATTEMPT_PATTERN.test(key),
+              )
+          .map(([key]) => [key, true]),
   );
 }
 
@@ -56,6 +82,9 @@ export function sanitizeActivityConfirmed(confirmed) {
  * (it was only ever incremented on success), so an entry there means the card
  * scored — migrate it into `confirmed` rather than reading it as failures,
  * which would otherwise hand every completed card a free retry.
+ * @param {?ActivityMemoryInput} memory Stored ledger, a legacy attempts map, or
+ *     null.
+ * @return {!ActivityMemory} Two-ledger memory safe to keep for today.
  */
 export function migrateActivityMemory(memory) {
   const source = memory || {};
@@ -68,20 +97,30 @@ export function migrateActivityMemory(memory) {
   const legacy = sanitizeActivityAttempts(source.attempts);
   const confirmed = {};
   for (const [key, count] of Object.entries(legacy)) {
-    if (Number(count) >= 1) confirmed[key] = true;
+    if (Number(count) >= 1) {
+      confirmed[key] = true;
+    }
   }
-  return { confirmed, attempts: {} };
+  return {confirmed, attempts: {}};
 }
 
 /**
  * Keys the engine must not click this pass: already handled this session,
  * already confirmed today, or failed too many times today.
+ * @param {?ActivityMemoryInput} memory Today's ledger, or null.
+ * @param {!Array<string>|!Set<string>|null|undefined} sessionVisited Keys
+ *     already handled in this session.
+ * @param {?ActivityBlockOptions=} options Failure budget. Defaults to
+ *     MAX_FAILED_ACTIVITY_ATTEMPTS. Null is treated as omitted.
+ * @return {!Set<string>} Keys the engine must not click this pass.
  */
 export function getBlockedActivityKeys(memory, sessionVisited, options = {}) {
-  const { maxFailedAttempts = MAX_FAILED_ACTIVITY_ATTEMPTS } = options || {};
+  const {maxFailedAttempts = MAX_FAILED_ACTIVITY_ATTEMPTS} = options || {};
   const blocked = new Set(sessionVisited || []);
   for (const [key, value] of Object.entries(memory?.confirmed || {})) {
-    if (value) blocked.add(key);
+    if (value) {
+      blocked.add(key);
+    }
   }
   for (const [key, count] of Object.entries(memory?.attempts || {})) {
     if (Number(count) >= maxFailedAttempts) {
@@ -91,9 +130,16 @@ export function getBlockedActivityKeys(memory, sessionVisited, options = {}) {
   return blocked;
 }
 
-// Record a FAILED attempt against the day's ledger.
+/**
+ * Records a failed attempt against the day's ledger. A missing memory is
+ * ignored.
+ * @param {?ActivityMemoryInput} memory Mutable daily ledger.
+ * @param {!Array<string>|null|undefined} keys Activity keys that failed.
+ */
 export function recordActivityFailures(memory, keys) {
-  if (!memory) return;
+  if (!memory) {
+    return;
+  }
   memory.attempts = memory.attempts || {};
   for (const key of keys || []) {
     memory.attempts[key] = (Number(memory.attempts[key]) || 0) + 1;
@@ -103,20 +149,30 @@ export function recordActivityFailures(memory, keys) {
 /**
  * A card scored. Block it for the rest of the day and forget its earlier
  * failures — those were slow points or a raced tab, not a dead card.
+ * @param {?ActivityMemoryInput} memory Mutable daily ledger. Null updates only
+ *     the session sets.
+ * @param {!Set<string>} sessionVisited Keys blocked for this session.
+ * @param {!Set<string>} sessionMisses In-session miss counts, keyed by
+ *     activity.
+ * @param {!Array<string>|null|undefined} keys Cards that scored.
  */
 export function confirmActivityKeys(
-  memory,
-  sessionVisited,
-  sessionMisses,
-  keys,
+    memory,
+    sessionVisited,
+    sessionMisses,
+    keys,
 ) {
-  if (memory) memory.confirmed = memory.confirmed || {};
+  if (memory) {
+    memory.confirmed = memory.confirmed || {};
+  }
   for (const key of keys || []) {
     sessionVisited.add(key);
     sessionMisses.delete(key);
     if (memory) {
       memory.confirmed[key] = true;
-      if (memory.attempts) delete memory.attempts[key];
+      if (memory.attempts) {
+        delete memory.attempts[key];
+      }
     }
   }
 }
@@ -127,15 +183,25 @@ export function confirmActivityKeys(
  *
  * Passing `memory` also persists the failure for the day, so a card that never
  * scores is not re-attempted from scratch in every single run.
+ * @param {!Array<string>|null|undefined} keys Clicked cards that did not score.
+ * @param {!Set<string>} sessionVisited Keys blocked for this session.
+ * @param {!Map<string, number>} sessionMisses In-session miss counts.
+ * @param {number=} maxMisses Misses before the card is blocked for the
+ *     session. Defaults to 3 so a slow-scoring card gets one extra chance.
+ * @param {?ActivityMemoryInput=} memory Daily ledger updated only when a card
+ *     is given up for the session. Defaults to null.
+ * @return {{retryable: boolean, blocked: number}} Whether any card can be
+ *     tried again, and how many were blocked.
  */
 export function markUnconfirmedActivityKeys(
-  keys,
-  sessionVisited,
-  sessionMisses,
-  // 3 rather than 2: a slow-scoring card and a genuinely missed click look the
-  // same to the caller, so give one extra chance before blocking for the session.
-  maxMisses = 3,
-  memory = null,
+    keys,
+    sessionVisited,
+    sessionMisses,
+    // 3 rather than 2: a slow-scoring card and a genuinely missed click look
+    // the same to the caller, so give one extra chance before blocking for the
+    // session.
+    maxMisses = 3,
+    memory = null,
 ) {
   let retryable = false;
   let blocked = 0;
@@ -152,5 +218,5 @@ export function markUnconfirmedActivityKeys(
       retryable = true;
     }
   }
-  return { retryable, blocked };
+  return {retryable, blocked};
 }

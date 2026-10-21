@@ -8,42 +8,81 @@
  * chrome/debugger I/O lives in this file — service.js executes the plans.
  */
 
+/**
+ * @typedef {{type: 'insert', text: string, typo: (boolean|undefined),
+ *     corrected: (boolean|undefined)}} TypingInsert
+ */
+/** @typedef {{type: 'backspace', count: number}} TypingBackspace */
+/** @typedef {{type: 'pause', ms: number}} TypingPause */
+/** @typedef {TypingInsert|TypingBackspace|TypingPause} TypingStep */
+/**
+ * @typedef {{rng: (undefined|function(): number),
+ *     typoChance: (number|undefined), maxTypos: (number|undefined),
+ *     noticeDelayMin: (number|undefined), noticeDelayMax: (number|undefined)}}
+ *     TypingOptions
+ */
+/**
+ * @typedef {{rng: (undefined|function(): number), minBurst: (number|undefined),
+ *     maxBurst: (number|undefined)}} NicheOptions
+ */
+/**
+ * @typedef {{next: function(): ?string, remaining: number, niche: ?string}}
+ *     NicheSession
+ */
+/**
+ * @typedef {{rng: (undefined|function(): number), boost: (number|undefined),
+ *     cap: (number|undefined)}} ReadDelayOptions
+ */
+/**
+ * @typedef {{rng: (undefined|function(): number), per: (number|undefined)}}
+ *     PauseIndexOptions
+ */
+
 // QWERTY adjacency used to pick a plausible mistyped key. A typo must land on a
 // physically neighbouring key; a random letter reads as corruption, not as a
 // human slip.
 export const KEYBOARD_NEIGHBOURS = {
-  a: ["s", "q", "w", "z"],
-  b: ["v", "g", "h", "n"],
-  c: ["x", "d", "f", "v"],
-  d: ["s", "e", "r", "f", "c", "x"],
-  e: ["w", "s", "d", "r"],
-  f: ["d", "r", "t", "g", "v", "c"],
-  g: ["f", "t", "y", "h", "b", "v"],
-  h: ["g", "y", "u", "j", "n", "b"],
-  i: ["u", "j", "k", "o"],
-  j: ["h", "u", "i", "k", "m", "n"],
-  k: ["j", "i", "o", "l", "m"],
-  l: ["k", "o", "p"],
-  m: ["n", "j", "k"],
-  n: ["b", "h", "j", "m"],
-  o: ["i", "k", "l", "p"],
-  p: ["o", "l"],
-  q: ["a", "w"],
-  r: ["e", "d", "f", "t"],
-  s: ["a", "w", "e", "d", "x", "z"],
-  t: ["r", "f", "g", "y"],
-  u: ["y", "h", "j", "i"],
-  v: ["c", "f", "g", "b"],
-  w: ["q", "a", "s", "e"],
-  x: ["z", "s", "d", "c"],
-  y: ["t", "g", "h", "u"],
-  z: ["a", "s", "x"],
+  a: ['s', 'q', 'w', 'z'],
+  b: ['v', 'g', 'h', 'n'],
+  c: ['x', 'd', 'f', 'v'],
+  d: ['s', 'e', 'r', 'f', 'c', 'x'],
+  e: ['w', 's', 'd', 'r'],
+  f: ['d', 'r', 't', 'g', 'v', 'c'],
+  g: ['f', 't', 'y', 'h', 'b', 'v'],
+  h: ['g', 'y', 'u', 'j', 'n', 'b'],
+  i: ['u', 'j', 'k', 'o'],
+  j: ['h', 'u', 'i', 'k', 'm', 'n'],
+  k: ['j', 'i', 'o', 'l', 'm'],
+  l: ['k', 'o', 'p'],
+  m: ['n', 'j', 'k'],
+  n: ['b', 'h', 'j', 'm'],
+  o: ['i', 'k', 'l', 'p'],
+  p: ['o', 'l'],
+  q: ['a', 'w'],
+  r: ['e', 'd', 'f', 't'],
+  s: ['a', 'w', 'e', 'd', 'x', 'z'],
+  t: ['r', 'f', 'g', 'y'],
+  u: ['y', 'h', 'j', 'i'],
+  v: ['c', 'f', 'g', 'b'],
+  w: ['q', 'a', 's', 'e'],
+  x: ['z', 's', 'd', 'c'],
+  y: ['t', 'g', 'h', 'u'],
+  z: ['a', 's', 'x'],
 };
 
+/**
+ * Picks a QWERTY neighbour and keeps the original letter's case.
+ * @param {string} char Character to mistype.
+ * @param {function(): number=} rng Unit-interval random source. Defaults to
+ *     Math.random.
+ * @return {?string} Neighbouring letter, or null when the key has no map.
+ */
 export function nearbyKey(char, rng = Math.random) {
   const lower = String(char).toLowerCase();
   const neighbours = KEYBOARD_NEIGHBOURS[lower];
-  if (!neighbours || neighbours.length === 0) return null;
+  if (!neighbours || neighbours.length === 0) {
+    return null;
+  }
   const pick = neighbours[Math.floor(rng() * neighbours.length)];
   return char === lower ? pick : pick.toUpperCase();
 }
@@ -57,6 +96,11 @@ export function nearbyKey(char, rng = Math.random) {
  * INVARIANT: applying the steps in order to an empty buffer always reproduces
  * `query` exactly. A typo is always corrected — an *uncorrected* typo is more
  * suspicious than a clean query, because real users notice and fix them.
+ * @param {string|null|undefined} query Text to type. Null and undefined are
+ *     empty.
+ * @param {!TypingOptions=} options Typo rate and notice delay. Defaults: rng
+ *     Math.random, typoChance 0.18, maxTypos 2, notice 220–600 ms.
+ * @return {!Array<!TypingStep>} Steps that reproduce query exactly.
  */
 export function planTypingSteps(query, options = {}) {
   const {
@@ -67,32 +111,36 @@ export function planTypingSteps(query, options = {}) {
     noticeDelayMax = 600,
   } = options;
 
-  const text = String(query ?? "");
+  const text = String(query ?? '');
   const steps = [];
-  if (text.length === 0) return steps;
+  if (text.length === 0) {
+    return steps;
+  }
 
   // Type word-by-word: real typing bursts at word granularity with a longer
   // gap at the space, rather than a uniform per-character stream.
-  const words = text.split(" ");
+  const words = text.split(' ');
   let typos = 0;
 
   for (let wi = 0; wi < words.length; wi++) {
     const word = words[wi];
-    const prefix = wi > 0 ? " " : "";
+    const prefix = wi > 0 ? ' ' : '';
 
     // A typo needs at least 2 letters of runway; the first character of a word
     // is rarely fumbled and mistyping it looks synthetic.
     const canTypo = typos < maxTypos && word.length >= 3 && rng() < typoChance;
 
     if (!canTypo) {
-      if (prefix + word) steps.push({ type: "insert", text: prefix + word });
+      if (prefix + word) {
+        steps.push({type: 'insert', text: prefix + word});
+      }
       continue;
     }
 
     const at = 1 + Math.floor(rng() * (word.length - 1));
     const wrong = nearbyKey(word[at], rng);
     if (wrong === null || wrong === word[at]) {
-      steps.push({ type: "insert", text: prefix + word });
+      steps.push({type: 'insert', text: prefix + word});
       continue;
     }
 
@@ -100,20 +148,17 @@ export function planTypingSteps(query, options = {}) {
     // Overshoot slightly past the bad character sometimes — people usually
     // catch a typo a keystroke or two late, not instantly.
     const overshoot = rng() < 0.5 && at + 1 < word.length ? 1 : 0;
-    const typed =
-      prefix +
-      word.slice(0, at) +
-      wrong +
-      word.slice(at + 1, at + 1 + overshoot);
-    steps.push({ type: "insert", text: typed, typo: true });
+    const typed = prefix + word.slice(0, at) + wrong +
+        word.slice(at + 1, at + 1 + overshoot);
+    steps.push({type: 'insert', text: typed, typo: true});
     steps.push({
-      type: "pause",
+      type: 'pause',
       ms: Math.round(
-        noticeDelayMin + rng() * (noticeDelayMax - noticeDelayMin),
-      ),
+          noticeDelayMin + rng() * (noticeDelayMax - noticeDelayMin),
+          ),
     });
-    steps.push({ type: "backspace", count: 1 + overshoot });
-    steps.push({ type: "insert", text: word.slice(at), corrected: true });
+    steps.push({type: 'backspace', count: 1 + overshoot});
+    steps.push({type: 'insert', text: word.slice(at), corrected: true});
   }
 
   return steps;
@@ -127,27 +172,48 @@ export function planTypingSteps(query, options = {}) {
  * Returns {next()} — the same niche for `minBurst..maxBurst` consecutive calls,
  * then a *different* one (never the same niche twice in a row when more than
  * one category exists).
+ * @param {!Array<string>} categories Niche names. Empty entries are dropped.
+ * @param {!NicheOptions=} options Burst length. Defaults: rng Math.random,
+ *     minBurst 3, maxBurst 6.
+ * @return {!NicheSession} Stateful picker. next() stays on one niche for the
+ *     burst, then changes.
  */
 export function createNicheSession(categories, options = {}) {
-  const { rng = Math.random, minBurst = 3, maxBurst = 6 } = options;
+  const {rng = Math.random, minBurst = 3, maxBurst = 6} = options;
   const pool = Array.isArray(categories) ? categories.filter(Boolean) : [];
 
   let current = null;
   let remaining = 0;
 
+  /**
+   * @return {number} How many queries to keep the chosen niche.
+   */
   const rollBurst = () =>
-    minBurst + Math.floor(rng() * Math.max(1, maxBurst - minBurst + 1));
+      minBurst + Math.floor(rng() * Math.max(1, maxBurst - minBurst + 1));
 
+  /**
+   * @return {?string} A niche other than the current one, or null when the
+   *     pool is empty.
+   */
   const pickDifferent = () => {
-    if (pool.length === 0) return null;
-    if (pool.length === 1) return pool[0];
+    if (pool.length === 0) {
+      return null;
+    }
+    if (pool.length === 1) {
+      return pool[0];
+    }
     const others = pool.filter((niche) => niche !== current);
     return others[Math.floor(rng() * others.length)];
   };
 
   return {
+    /**
+     * @return {?string} Niche for this query, or null when no categories exist.
+     */
     next() {
-      if (pool.length === 0) return null;
+      if (pool.length === 0) {
+        return null;
+      }
       if (remaining <= 0) {
         current = pickDifferent();
         remaining = rollBurst();
@@ -155,18 +221,29 @@ export function createNicheSession(categories, options = {}) {
       remaining--;
       return current;
     },
-    // Exposed for logging: how many queries are left in the current topic run.
+    /**
+     * Exposed for logging: how many queries are left in the current topic run.
+     * @return {number} Queries remaining before a new niche is chosen.
+     */
     get remaining() {
       return remaining;
     },
+    /**
+     * @return {?string} Niche currently being searched, or null before the
+     *     first next() call and when the pool is empty.
+     */
     get niche() {
       return current;
     },
   };
 }
 
-// Standard normal via Box-Muller. Two rng draws, clamped away from 0 so the
-// log never blows up.
+/**
+ * Standard normal via Box-Muller. Two rng draws, clamped away from 0 so the
+ * log never blows up.
+ * @param {function(): number} rng Unit-interval random source.
+ * @return {number} Standard-normal sample.
+ */
 function gaussian(rng) {
   const u1 = Math.max(rng(), 1e-9);
   const u2 = rng();
@@ -194,9 +271,15 @@ export const READ_DELAY_CAP_MS = 90000;
  * `minSec`/`maxSec` are the user's configured bounds: the median lands inside
  * them, and the tail is allowed to run past `maxSec` (up to 3x) because real
  * long gaps are exactly what a hard ceiling removes.
+ * @param {number} minSec Configured minimum read time, in seconds.
+ * @param {number} maxSec Configured maximum read time, in seconds.
+ * @param {!ReadDelayOptions=} options Random source, multiplier and cap in
+ *     milliseconds. Defaults: rng Math.random, boost 1, cap
+ *     READ_DELAY_CAP_MS.
+ * @return {number} Delay in milliseconds.
  */
 export function humanReadDelayMs(minSec, maxSec, options = {}) {
-  const { rng = Math.random, boost = 1, cap = READ_DELAY_CAP_MS } = options;
+  const {rng = Math.random, boost = 1, cap = READ_DELAY_CAP_MS} = options;
   const min = Math.max(1, Number(minSec) || 1) * 1000;
   const max = Math.max(min, (Number(maxSec) || 0) * 1000);
 
@@ -218,24 +301,38 @@ export function humanReadDelayMs(minSec, maxSec, options = {}) {
  * Returns a Set of 0-based indices; roughly one per `per` searches, never the
  * first or the last (a pause there just delays the run without looking like
  * anything).
+ * @param {number} total Planned search count.
+ * @param {!PauseIndexOptions=} options Random source and searches per pause.
+ *     per defaults to DEFAULT_SEARCHES_PER_LONG_PAUSE.
+ * @return {!Set<number>} Zero-based indices that should pause.
  */
 export function planLongPauseIndices(total, options = {}) {
-  const { rng = Math.random, per = DEFAULT_SEARCHES_PER_LONG_PAUSE } = options;
+  const {rng = Math.random, per = DEFAULT_SEARCHES_PER_LONG_PAUSE} = options;
   const count = Math.floor((Number(total) || 0) / per);
   const indices = new Set();
-  if (count <= 0 || total < 4) return indices;
+  if (count <= 0 || total < 4) {
+    return indices;
+  }
 
   for (let i = 0; i < count; i++) {
     // Candidate range excludes index 0 and the final search.
     const span = total - 2;
-    if (span <= 0) break;
+    if (span <= 0) {
+      break;
+    }
     indices.add(1 + Math.floor(rng() * span));
   }
   return indices;
 }
 
+/**
+ * Samples one "stepped away" pause inside the configured long-pause band.
+ * @param {function(): number=} rng Unit-interval random source. Defaults to
+ *     Math.random.
+ * @return {number} Pause length in milliseconds.
+ */
 export function longPauseMs(rng = Math.random) {
   return Math.round(
-    LONG_PAUSE_MIN_MS + rng() * (LONG_PAUSE_MAX_MS - LONG_PAUSE_MIN_MS),
+      LONG_PAUSE_MIN_MS + rng() * (LONG_PAUSE_MAX_MS - LONG_PAUSE_MIN_MS),
   );
 }

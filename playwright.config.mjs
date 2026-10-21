@@ -1,12 +1,13 @@
-import { defineConfig } from "@playwright/test";
+import {defineConfig} from '@playwright/test';
 
 export default defineConfig({
-  testDir: "./e2e",
+  testDir: './e2e',
+  testMatch: '**/*-spec.mjs',
   fullyParallel: false,
-  reporter: "list",
+  reporter: 'list',
   use: {
-    browserName: "chromium",
+    browserName: 'chromium',
     headless: true,
-    viewport: { width: 1280, height: 720 },
+    viewport: {width: 1280, height: 720},
   },
 });

@@ -1,3 +1,3 @@
-import { createFirefoxApi } from "./firefox-api.js";
+import {createFirefoxApi} from './firefox-api.js';
 globalThis.extension = createFirefoxApi(browser);
-import("./service.js").catch(console.error);
+import('./service.js').catch(console.error);

@@ -1,51 +1,26 @@
-import { get, atomicUpdate, applyConfigDefaults } from "/js/utils.js";
-import { createDefaultConfig } from "/js/config-defaults.js";
-import { ACTIONS, MESSAGE_TIMEOUT_MS } from "/js/messages.js";
-import { devices } from "/js/devices.js";
+import {get, atomicUpdate} from '/js/utils.js';
+import {createDefaultConfig, applyConfigDefaults} from '/js/config-defaults.js';
+import {ACTIONS, sendMessageWithTimeout} from '/js/messages.js';
+import {devices} from '/js/devices.js';
 
 const phaseLabels = {
-  search: "Đang tìm kiếm trên máy tính…",
-  mobile_pre_clear: "Đang chuẩn bị tìm kiếm trên điện thoại…",
-  mobile_simulation: "Đang mô phỏng điện thoại…",
-  mobile_search: "Đang tìm kiếm trên điện thoại…",
-  post_mobile: "Đang khôi phục đăng nhập…",
-  post_search: "Đang hoàn tất sau tìm kiếm…",
-  activities: "Đang làm nhiệm vụ Rewards…",
+  search: 'Đang tìm kiếm trên máy tính…',
+  mobile_pre_clear: 'Đang chuẩn bị tìm kiếm trên điện thoại…',
+  mobile_simulation: 'Đang mô phỏng điện thoại…',
+  mobile_search: 'Đang tìm kiếm trên điện thoại…',
+  post_mobile: 'Đang khôi phục đăng nhập…',
+  post_search: 'Đang hoàn tất sau tìm kiếm…',
+  activities: 'Đang làm nhiệm vụ Rewards…',
 };
 
 let config = createDefaultConfig();
-const startButton = document.querySelector("#searchTrigger");
-const runStatus = document.querySelector("#runStatus");
-const progressText = document.querySelector("#progressText");
-const progressFill = document.querySelector("#progressFill");
-const progressTrack = document.querySelector(".progressTrack");
+const startButton = document.querySelector('#searchTrigger');
+const runStatus = document.querySelector('#runStatus');
+const progressText = document.querySelector('#progressText');
+const progressFill = document.querySelector('#progressFill');
+const progressTrack = document.querySelector('.progressTrack');
 
-function sendMessageWithTimeout(message) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      reject(
-        new Error(`Không nhận được phản hồi sau ${MESSAGE_TIMEOUT_MS} ms`),
-      );
-    }, MESSAGE_TIMEOUT_MS);
-    chrome.runtime.sendMessage(message).then(
-      (response) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        resolve(response);
-      },
-      (error) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
+
 
 async function loadConfig() {
   const stored = await get();
@@ -62,36 +37,41 @@ function render() {
   const failed = Math.max(0, Number(runtime.failed) || 0);
   const percent = total ? Math.min(100, Math.round((done / total) * 100)) : 0;
 
-  document.querySelector("#desktopCount").textContent = config.search.desk;
-  document.querySelector("#mobileCount").textContent = config.search.mob;
-  startButton.textContent = running ? "Dừng" : "Start";
-  startButton.classList.toggle("stopping", running);
+  document.querySelector('#desktopCount').textContent = config.search.desk;
+  document.querySelector('#mobileCount').textContent = config.search.mob;
+  startButton.textContent = running ? 'Dừng' : 'Start';
+  startButton.classList.toggle('stopping', running);
   startButton.disabled = false;
   progressFill.style.width = `${percent}%`;
-  progressTrack.setAttribute("aria-valuenow", String(percent));
+  progressTrack.setAttribute('aria-valuenow', String(percent));
 
   if (running) {
-    runStatus.textContent = phaseLabels[runtime.currentPhase] || "Đang chạy…";
-    progressText.textContent = `${done} / ${total} lượt${failed ? ` · lỗi ${failed}` : ""}`;
+    runStatus.textContent = phaseLabels[runtime.currentPhase] || 'Đang chạy…';
+    progressText.textContent =
+        `${done} / ${total} lượt${failed ? ` · lỗi ${failed}` : ''}`;
   } else if (total > 0 && done >= total) {
-    runStatus.textContent = failed
-      ? "Đã hoàn tất, có lượt tìm gặp lỗi."
-      : "Đã hoàn tất.";
-    progressText.textContent = `${done} / ${total} lượt${failed ? ` · lỗi ${failed}` : ""}`;
+    runStatus.textContent =
+        failed ? 'Đã hoàn tất, có lượt tìm gặp lỗi.' : 'Đã hoàn tất.';
+    progressText.textContent =
+        `${done} / ${total} lượt${failed ? ` · lỗi ${failed}` : ''}`;
   } else {
-    runStatus.textContent = "Sẵn sàng chạy theo cấu hình đã lưu.";
-    progressText.textContent = "";
+    runStatus.textContent = 'Sẵn sàng chạy theo cấu hình đã lưu.';
+    progressText.textContent = '';
   }
 }
 
 async function ensureMobileDevice() {
-  if (!config.search.mob || config.device?.ua) return;
+  if (!config.search.mob || config.device?.ua) {
+    return;
+  }
   const candidates = devices.filter(
-    (device) => !/iPhone|iPad|iPod/i.test(device.userAgent || ""),
+      (device) => !/iPhone|iPad|iPod/i.test(device.userAgent || ''),
   );
   const pool = candidates.length ? candidates : devices;
   const device = pool[Math.floor(Math.random() * pool.length)];
-  if (!device) return;
+  if (!device) {
+    return;
+  }
   const updated = await atomicUpdate((stored) => {
     const next = createDefaultConfig();
     applyConfigDefaults(next, stored);
@@ -105,44 +85,50 @@ async function ensureMobileDevice() {
     };
     return next;
   });
-  if (updated) config = updated;
+  if (updated) {
+    config = updated;
+  }
 }
 
 async function handleTrigger() {
   startButton.disabled = true;
   try {
     if (config.runtime?.running) {
-      runStatus.textContent = "Đang dừng…";
-      const response = await sendMessageWithTimeout({ action: ACTIONS.STOP });
-      if (response?.success === false)
-        throw new Error(response.message || "Không dừng được phiên chạy.");
+      runStatus.textContent = 'Đang dừng…';
+      const response = await sendMessageWithTimeout({action: ACTIONS.STOP});
+      if (response?.success === false) {
+        throw new Error(response.message || 'Không dừng được phiên chạy.');
+      }
     } else {
       await ensureMobileDevice();
-      runStatus.textContent = "Đang khởi động…";
+      runStatus.textContent = 'Đang khởi động…';
       const response = await sendMessageWithTimeout({
         action: ACTIONS.START,
-        searches: { ...config.search },
+        searches: {...config.search},
       });
-      if (response?.success === false)
-        throw new Error(response.message || "Không bắt đầu được.");
+      if (response?.success === false) {
+        throw new Error(response.message || 'Không bắt đầu được.');
+      }
     }
     await loadConfig();
   } catch (error) {
-    runStatus.textContent = error?.message || "Không thực hiện được yêu cầu.";
+    runStatus.textContent = error?.message || 'Không thực hiện được yêu cầu.';
     startButton.disabled = false;
   }
 }
 
-startButton.addEventListener("click", handleTrigger);
-document.querySelector("#openSettings").addEventListener("click", () => {
-  chrome.tabs.create({ url: "/options.html" });
+startButton.addEventListener('click', handleTrigger);
+document.querySelector('#openSettings').addEventListener('click', () => {
+  chrome.tabs.create({url: '/options.html'});
 });
-document.querySelector("#openGuide").addEventListener("click", () => {
-  chrome.tabs.create({ url: "/manual.html" });
+document.querySelector('#openGuide').addEventListener('click', () => {
+  chrome.tabs.create({url: '/manual.html'});
 });
 
 chrome.storage.onChanged.addListener((changes, area) => {
-  if (area !== "local" || !changes.config) return;
+  if (area !== 'local' || !changes.config) {
+    return;
+  }
   config = createDefaultConfig();
   applyConfigDefaults(config, changes.config.newValue);
   render();

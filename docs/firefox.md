@@ -8,18 +8,16 @@ Trên Windows chạy từ thư mục project:
 
 ```powershell
 npm.cmd run build:firefox
-npm.cmd run package:firefox
 ```
 
 - Thư mục extension: `dist/firefox/`.
-- Gói ZIP: `dist/search-auto-firefox-<version>.zip`.
 - Yêu cầu Firefox desktop 128 trở lên.
 
-Mỗi lần dựng sẽ thay toàn bộ `dist/firefox/` để loại tệp cũ. Gói extension chỉ chứa mã và tài nguyên chạy, không chép tài liệu phát triển hoặc script fingerprint chỉ dùng trên Chrome. `dist/` và ZIP được bỏ qua trong Git.
+Mỗi lần dựng sẽ thay toàn bộ `dist/firefox/` để loại tệp cũ. Bản dựng chỉ chứa mã và tài nguyên chạy, không chép tài liệu phát triển hoặc script fingerprint chỉ dùng trên Chrome. `dist/` được bỏ qua trong Git.
 
-Mở `about:debugging#/runtime/this-firefox`, chọn **Load Temporary Add-on…** rồi chọn `dist/firefox/manifest.json`. Có thể chọn gói ZIP đã dựng. Đăng nhập Bing/Rewards trong cùng hồ sơ Firefox, mở Search Auto và chạy.
+Mở `about:debugging#/runtime/this-firefox`, chọn **Load Temporary Add-on…** rồi chọn `dist/firefox/manifest.json`. Đăng nhập Bing/Rewards trong cùng hồ sơ Firefox, mở Search Auto và chạy.
 
-Cài tạm mất khi đóng Firefox. Muốn phân phối/cài lâu dài phải gửi gói để Mozilla ký, hoặc phát hành qua AMO. ZIP hiện tại chưa ký. Chưa có bước ký hay xuất bản tự động trong project.
+Cài tạm mất khi đóng Firefox. Muốn cài lâu dài phải gửi bản đã ký cho Mozilla, hoặc phát hành qua AMO. Project chưa có bước ký hay xuất bản tự động.
 
 ## Khác biệt với Chrome
 
@@ -47,7 +45,7 @@ npm.cmd run test:firefox
 
 `test:firefox` chạy Firefox headless với hồ sơ thử nghiệm riêng, cài tạm bản dựng, kiểm tra tiến trình nền/popup và các thao tác với trang fixture. Không dùng tài khoản Microsoft thật. Có thể đặt biến `FIREFOX_BINARY` nếu Firefox nằm ở vị trí khác. Test đóng Firefox và xóa thư mục tạm sau khi chạy, kể cả khi test lỗi; chỉ giữ hồ sơ nếu Firefox chưa thoát hoặc đặt `KEEP_FIREFOX_TEST_PROFILE=1` để chẩn đoán.
 
-Đã kiểm tra trên Firefox 156: nạp extension, khởi tạo cấu hình/alarm, hiển thị phiên bản popup, gửi form tìm kiếm, bấm phần tử, lệnh dừng qua runtime message, đổi/khôi phục User-Agent và xóa cookie/local storage trong phạm vi yêu cầu. Manifest và mã thử nghiệm chỉ thêm quyền localhost vào bản sao trong thư mục tạm; gói phát hành không có quyền localhost.
+Đã kiểm tra trên Firefox 156: nạp extension, khởi tạo cấu hình/alarm, hiển thị phiên bản popup, gửi form tìm kiếm, bấm phần tử, lệnh dừng qua runtime message, đổi/khôi phục User-Agent và xóa cookie/local storage trong phạm vi yêu cầu. Manifest và mã thử nghiệm chỉ thêm quyền localhost vào bản sao trong thư mục tạm; bản dựng trong `dist/firefox` không có quyền localhost.
 
 Để xem log thực tế, mở **Inspect** ở mục Search Auto trong `about:debugging`. Việc Microsoft ghi nhận điểm và các trang nhiệm vụ trực tuyến cần được kiểm tra với tài khoản đã đăng nhập.
 

@@ -3,34 +3,37 @@
   "version": "1.0.0",
   "private": true,
   "scripts": {
+    "build:chrome": "node scripts/build-chrome.cjs",
+    "package:chrome": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-extension.ps1 -Target chrome",
     "build:firefox": "node scripts/build-firefox.cjs",
     "test:firefox": "node scripts/test-firefox.cjs",
     "package:firefox": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/package-firefox.ps1",
-    "pretest": "node tests/check_syntax.js",
+    "pretest": "node tests/check-syntax.js",
     "test": "jest --verbose",
     "test:claim": "playwright test --config=playwright.config.mjs",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage",
-    "lint": "eslint js tests scripts eslint.config.js",
-    "lint:fix": "eslint js tests scripts eslint.config.js --fix",
-    "format": "prettier --write \"**/*.{js,cjs,json,md,html,css}\"",
-    "format:check": "prettier --check \"**/*.{js,cjs,json,md,html,css}\""
+    "lint": "eslint js tests scripts e2e eslint.config.js playwright.config.mjs --max-warnings 0",
+    "lint:fix": "eslint js tests scripts e2e eslint.config.js playwright.config.mjs --fix --max-warnings 0",
+    "audit:types": "node scripts/audit-jsdoc.cjs",
+    "format": "node scripts/format-js.cjs --write && prettier --write \"**/*.{json,md,html,css}\"",
+    "format:check": "node scripts/format-js.cjs --check && prettier --check \"**/*.{json,md,html,css}\""
   },
   "devDependencies": {
     "@eslint/js": "^9.39.5",
-    "acorn": "^8.18.0",
     "@playwright/test": "^1.63.0",
+    "acorn": "^8.18.0",
+    "clang-format": "1.8.0",
     "eslint": "^9.39.4",
-    "eslint-config-prettier": "^9.1.2",
     "globals": "^15.15.0",
-    "jest": "^29.7.0",
-    "jest-environment-jsdom": "^29.7.0",
+    "jest": "30.5.2",
+    "jest-environment-jsdom": "30.5.2",
     "prettier": "^3.9.5"
   },
   "jest": {
     "testEnvironment": "node",
     "testMatch": [
-      "**/tests/**/*.test.js"
+      "**/tests/**/*-test.js"
     ],
     "modulePathIgnorePatterns": [
       "<rootDir>/.cleanup-baseline/"

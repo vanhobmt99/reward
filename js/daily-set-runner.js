@@ -1,5 +1,32 @@
-// An empty scan is not proof of completion. Keep recovery bounded and report
-// an unresolved state instead of silently treating it as success.
+/**
+ * @typedef {{status: string}} DailySetState
+ */
+/**
+ * @typedef {{clicked: (number|undefined), processed: (number|undefined),
+ *     retry: (boolean|undefined), pointDelta: (number|undefined)}} DailySetScan
+ */
+/**
+ * @typedef {{inspect: function(): !Promise<!DailySetState>,
+ *     scan: function(number): !Promise<(DailySetScan|null|undefined)>,
+ *     recover: function(number, !DailySetState): (void|!Promise<void>),
+ *     active: function(): boolean,
+ *     onPass: function(!DailySetScan): (void|!Promise<void>),
+ *     maxPasses: (number|undefined), maxRecoveries: (number|undefined)}}
+ *     DailySetController
+ */
+/**
+ * @typedef {{complete: boolean, reason: (string|undefined),
+ *     state: !DailySetState}} DailySetOutcome
+ */
+
+/**
+ * An empty scan is not proof of completion. Keep recovery bounded and report
+ * an unresolved state instead of silently treating it as success.
+ * @param {!DailySetController} run Inspect, scan and recovery hooks. maxPasses
+ *     defaults to 35 and maxRecoveries to 2.
+ * @return {!Promise<!DailySetOutcome>} Completion flag and last inspected
+ *     state. reason is omitted when the set is already complete.
+ */
 export async function runDailySet({
   inspect,
   scan,
@@ -11,29 +38,43 @@ export async function runDailySet({
 }) {
   let idle = 0;
   let recoveries = 0;
-  let state = { status: "unknown" };
+  let state = {status: 'unknown'};
   for (let pass = 1; pass <= maxPasses; pass++) {
-    if (!active()) return { complete: false, reason: "stopped", state };
+    if (!active()) {
+      return {complete: false, reason: 'stopped', state};
+    }
     state = await inspect();
-    if (!active()) return { complete: false, reason: "stopped", state };
-    if (state.status === "complete") return { complete: true, state };
-    const result = state.status === "pending" ? await scan(pass) : null;
-    if (result) await onPass(result);
+    if (!active()) {
+      return {complete: false, reason: 'stopped', state};
+    }
+    if (state.status === 'complete') {
+      return {complete: true, state};
+    }
+    const result = state.status === 'pending' ? await scan(pass) : null;
+    if (result) {
+      await onPass(result);
+    }
     // A retry request can repeat forever on a page whose controls never load.
     // Only a confirmed click or processed tab counts as progress.
     idle = result?.clicked > 0 || result?.processed > 0 ? 0 : idle + 1;
     if (idle >= 3) {
-      if (!active()) return { complete: false, reason: "stopped", state };
-      if (recoveries >= maxRecoveries) break;
+      if (!active()) {
+        return {complete: false, reason: 'stopped', state};
+      }
+      if (recoveries >= maxRecoveries) {
+        break;
+      }
       await recover(++recoveries, state);
       idle = 0;
     }
   }
-  if (!active()) return { complete: false, reason: "stopped", state };
+  if (!active()) {
+    return {complete: false, reason: 'stopped', state};
+  }
   state = await inspect();
   return {
-    complete: state.status === "complete",
-    reason: "verification exhausted",
+    complete: state.status === 'complete',
+    reason: 'verification exhausted',
     state,
   };
 }

@@ -1,23 +1,35 @@
-function log(message, type = "default") {
+import {isConfigRecord} from '/js/config-defaults.js';
+import {isRewardsSearchCounterComplete} from '/js/rewards-metrics.js';
+
+/**
+ * Prints a timestamped console line. Unknown types use the default color.
+ * @param {string} message Text to print.
+ * @param {string=} type Level: default, success, warning, error, or update.
+ */
+function log(message, type = 'default') {
   const colorMap = {
-    default: "#555555",
-    success: "#48d17e",
-    warning: "#f0a500",
-    error: "#ff0000",
-    update: "#00aaff",
+    default: '#555555',
+    success: '#48d17e',
+    warning: '#f0a500',
+    error: '#ff0000',
+    update: '#00aaff',
   };
   const color = colorMap[type] || colorMap.default;
-  const time = new Date().toLocaleTimeString("en-US", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
+  const time = new Date().toLocaleTimeString('en-US', {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
   });
   console.log(
-    `%c[${time}] - [${type.toUpperCase()}] - ${message}`,
-    `color: ${color}; font-weight: bold;`,
+      `%c[${time}] - [${type.toUpperCase()}] - ${message}`,
+      `color: ${color}; font-weight: bold;`,
   );
 }
 
+/**
+ * @param {!Object<string, *>} data Storage entries to replace.
+ * @return {!Promise<void>} Resolves after the storage callback succeeds.
+ */
 function chromeSet(data) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.set(data, () => {
@@ -29,6 +41,10 @@ function chromeSet(data) {
   });
 }
 
+/**
+ * @param {string|!Array<string>} keys Storage entries to read.
+ * @return {!Promise<!Object<string, *>>} Unvalidated stored values.
+ */
 function chromeGet(keys) {
   return new Promise((resolve, reject) => {
     chrome.storage.local.get(keys, (items) => {
@@ -40,301 +56,142 @@ function chromeGet(keys) {
   });
 }
 
-// ── Write-lock: serialize all config writes to prevent race conditions ──
-let _writeQueue = Promise.resolve();
-const WRITE_LOCK_KEY = "_configWriteLock";
+const WRITE_LOCK_KEY = '_configWriteLock';
 const WRITE_LOCK_TIMEOUT_MS = 30000;
 
-function _serializeWrite(writeFn) {
-  const task = _writeQueue
-    .then(() => writeFn())
-    .catch((err) => {
-      log(`[WRITE_LOCK] - Write failed: ${err.message}`, "error");
-      throw err;
-    });
-  _writeQueue = task.catch(() => {});
-  return task;
+/**
+ * Serializes cooperating writers in every extension page and worker.
+ * Only acquisition has a deadline: releasing a lock before an in-flight storage
+ * write finishes would allow that late write to overwrite the next operation.
+ * @template T
+ * @param {function(): !Promise<T>} write Operation to run under the lock.
+ * @return {!Promise<T>} Operation result, or an acquisition/storage error.
+ */
+async function withConfigWriteLock(write) {
+  const locks = globalThis.navigator?.locks;
+  if (typeof locks?.request !== 'function') {
+    throw new Error('Config writes require Web Locks');
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(
+      () => controller.abort(new Error(
+          `Could not acquire config write lock after ${
+              WRITE_LOCK_TIMEOUT_MS}ms`,
+          )),
+      WRITE_LOCK_TIMEOUT_MS);
+  try {
+    return await locks.request(
+        WRITE_LOCK_KEY, {mode: 'exclusive', signal: controller.signal}, () => {
+          clearTimeout(timer);
+          return write();
+        });
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
- * Acquire a cross-context write lock via chrome.storage.local.
- * Uses a simple spin-lock with exponential backoff (max ~5s).
+ * Replaces only the supplied top-level sections, preserving all other sections
+ * from the latest stored config. Each supplied section is a complete snapshot;
+ * use atomicUpdate for an edit to an individual field within a section.
+ * @param {!Object<string, *>} sections Sections owned by this writer.
+ * @return {!Promise<!Object<string, *>>} The combined persisted config.
  */
-async function _acquireCrossContextLock(logs) {
-  const start = Date.now();
-  const ownerId = `${Math.random().toString(36).slice(2)}_${Date.now()}`;
-  let attempt = 0;
-  while (Date.now() - start < WRITE_LOCK_TIMEOUT_MS) {
-    const { [WRITE_LOCK_KEY]: lock } = await chromeGet(WRITE_LOCK_KEY);
-    if (!lock || Date.now() - (lock.ts || 0) > WRITE_LOCK_TIMEOUT_MS) {
-      await chromeSet({ [WRITE_LOCK_KEY]: { id: ownerId, ts: Date.now() } });
-      await new Promise((r) => setTimeout(r, 5));
-      const { [WRITE_LOCK_KEY]: confirm } = await chromeGet(WRITE_LOCK_KEY);
-      if (confirm?.id === ownerId) return ownerId;
-    }
-    attempt++;
-    await new Promise((r) =>
-      setTimeout(r, Math.min(50 * Math.pow(2, attempt), 500)),
-    );
+async function updateConfigSections(sections) {
+  if (!isConfigRecord(sections)) {
+    throw new TypeError('Config sections must be an object');
   }
-  const message = `[WRITE_LOCK] - Could not acquire lock after ${WRITE_LOCK_TIMEOUT_MS}ms`;
-  logs && log(message, "error");
-  throw new Error(message);
+  const snapshot = structuredClone(sections);
+  return atomicUpdate((current) => ({...current, ...snapshot}));
 }
 
-async function _releaseCrossContextLock(ownerId) {
-  if (!ownerId) return;
-  try {
-    const { [WRITE_LOCK_KEY]: lock } = await chromeGet(WRITE_LOCK_KEY);
-    if (lock?.id === ownerId) {
-      await chrome.storage.local.remove(WRITE_LOCK_KEY);
-    }
-  } catch (error) {
-    log(`[WRITE_LOCK] - Could not release lock: ${error.message}`, "warning");
-  }
-}
-
-async function set(value) {
-  const logs = value?.control?.log;
-  return _serializeWrite(async () => {
-    if (globalThis.navigator?.locks?.request) {
-      return globalThis.navigator.locks.request(
-        WRITE_LOCK_KEY,
-        { mode: "exclusive" },
-        async () => {
-          await chromeSet({ config: value });
-          if (logs) {
-            log("[SET] Config data successfully set.", "success");
-          }
-        },
-      );
-    }
-    let lockOwner = null;
-    try {
-      lockOwner = await _acquireCrossContextLock(logs);
-      await chromeSet({ config: value });
-      if (logs) {
-        log("[SET] Config data successfully set.", "success");
-      }
-    } catch (err) {
-      log(`[SET] Failed to set config data: ${err.message}`, "error");
-      throw err;
-    } finally {
-      await _releaseCrossContextLock(lockOwner);
-    }
-  });
-}
-
+/**
+ * @return {!Promise<?Object<string, *>>} Stored config, or null if absent.
+ */
 async function get() {
   try {
-    const { config } = await chromeGet("config");
+    const {config} = await chromeGet('config');
     const logs = config?.control?.log;
     if (logs) {
-      log("[GET] Config data successfully retrieved.", "success");
+      log('[GET] Config data successfully retrieved.', 'success');
     }
-    return config || null;
+    return isConfigRecord(config) ? config : null;
   } catch (err) {
-    log(`[GET] Error retrieving config data: ${err.message}`, "error");
+    log(`[GET] Error retrieving config data: ${err.message}`, 'error');
     throw err;
   }
 }
 
 /**
- * Atomically read-modify-write config.
- * Prevents lost updates when popup and service worker both modify config.
- *
- * @param {Function} updateFn - Receives current config, returns modified config.
- * @returns {Promise<Object>} The new config after update.
+ * Applies an edit to the latest config while holding the shared write lock.
+ * The updater may be asynchronous, but must not call a config write helper:
+ * acquiring the same exclusive lock recursively would deadlock.
+ * @template T
+ * @param {function(!Object<string, *>): (T|!Promise<T>)} updateFn Config edit.
+ * @return {!Promise<T>} The persisted result. Failed edits do not write.
  */
 async function atomicUpdate(updateFn) {
-  return _serializeWrite(async () => {
-    if (globalThis.navigator?.locks?.request) {
-      return globalThis.navigator.locks.request(
-        WRITE_LOCK_KEY,
-        { mode: "exclusive" },
-        async () => {
-          const { config } = await chromeGet("config");
-          const updated = updateFn(config || {});
-          const logs = updated?.control?.log;
-          await chromeSet({ config: updated });
-          if (logs) {
-            log("[ATOMIC_UPDATE] Config updated atomically.", "success");
-          }
-          return updated;
-        },
-      );
+  return withConfigWriteLock(async () => {
+    const {config} = await chromeGet('config');
+    // Config is persisted as JSON. Capture before calling an updater that may
+    // mutate its input, so equal edits avoid storage writes and change events.
+    const previous = JSON.stringify(config);
+    const updated = await updateFn(isConfigRecord(config) ? config : {});
+    if (!isConfigRecord(updated)) {
+      throw new TypeError('Config updater must return an object');
     }
-    let lockOwner = null;
-    try {
-      lockOwner = await _acquireCrossContextLock();
-      const { config } = await chromeGet("config");
-      const updated = updateFn(config || {});
-      const logs = updated?.control?.log;
-      await chromeSet({ config: updated });
-      if (logs) {
-        log("[ATOMIC_UPDATE] Config updated atomically.", "success");
-      }
-      return updated;
-    } catch (err) {
-      log(`[ATOMIC_UPDATE] Failed: ${err.message}`, "error");
-      throw err;
-    } finally {
-      await _releaseCrossContextLock(lockOwner);
+    if (JSON.stringify(updated) !== previous) {
+      await chromeSet({config: updated});
     }
+    if (updated.control?.log) {
+      log('[ATOMIC_UPDATE] Config updated atomically.', 'success');
+    }
+    return updated;
   });
 }
 
-function isPlainObject(value) {
-  return value && typeof value === "object" && !Array.isArray(value);
-}
-
-function sanitizeStoredConfig(stored) {
-  if (!isPlainObject(stored)) {
-    return stored;
-  }
-  const sanitized = { ...stored };
-  delete sanitized.pro;
-  if (isPlainObject(sanitized.control)) {
-    sanitized.control = { ...sanitized.control };
-    delete sanitized.control.consent;
-  }
-  return sanitized;
-}
-
-function deepMergePlainObjects(base, patch) {
-  const merged = { ...base };
-  for (const [key, value] of Object.entries(patch)) {
-    if (isPlainObject(merged[key]) && isPlainObject(value)) {
-      merged[key] = deepMergePlainObjects(merged[key], value);
-    } else {
-      merged[key] = value;
-    }
-  }
-  return merged;
-}
-
-function applyConfigDefaults(target, stored) {
-  const storedPatchDefaultApplied =
-    stored?.control?.enhancedPatchDefaultApplied === 1;
-  const storedHumanPacingDefaultApplied =
-    stored?.control?.humanPacingDefaultApplied === 1;
-  const sanitizedStored = sanitizeStoredConfig(stored);
-  if (sanitizedStored) {
-    for (const [key, value] of Object.entries(sanitizedStored)) {
-      if (isPlainObject(target[key]) && isPlainObject(value)) {
-        target[key] = deepMergePlainObjects(target[key], value);
-      } else {
-        target[key] = value;
-      }
-    }
-  }
-
-  target.control = target.control || {};
-  delete target.control.consent;
-  delete target.pro;
-  if (!storedPatchDefaultApplied) {
-    target.control.clear = 1;
-    target.control.enhancedPatchDefaultApplied = 1;
-    target.control.preserveRewards = 1;
-  } else if (
-    target.control.clear === undefined ||
-    target.control.clear === null
-  ) {
-    target.control.clear = 1;
-  }
-  if (
-    target.control.preserveRewards === undefined ||
-    target.control.preserveRewards === null
-  ) {
-    target.control.preserveRewards = 1;
-  }
-  if (!storedHumanPacingDefaultApplied) {
-    if (target.search?.min === 10 && target.search?.max === 20) {
-      target.search = { ...target.search, min: 7, max: 14 };
-    }
-    if (target.schedule?.min === 10 && target.schedule?.max === 20) {
-      target.schedule = { ...target.schedule, min: 7, max: 14 };
-    }
-    target.control.humanPacingDefaultApplied = 1;
-  } else if (
-    target.control.humanPacingDefaultApplied === undefined ||
-    target.control.humanPacingDefaultApplied === null
-  ) {
-    target.control.humanPacingDefaultApplied = 1;
-  }
-  // One-time migration to the faster pacing defaults (6-10s). Only rewrites
-  // configs still on a previous default band (7/14 or the short-lived 5/8);
-  // custom pacing is preserved. Versioned flag: bumping the number re-runs
-  // the migration once for configs already stamped with an older version.
-  if ((Number(target.control.fastPacingDefaultApplied) || 0) < 2) {
-    const isOldDefault = (band) =>
-      (band?.min === 7 && band?.max === 14) ||
-      (band?.min === 5 && band?.max === 8);
-    if (isOldDefault(target.search)) {
-      target.search = { ...target.search, min: 6, max: 10 };
-    }
-    if (isOldDefault(target.schedule)) {
-      target.schedule = { ...target.schedule, min: 6, max: 10 };
-    }
-    target.control.fastPacingDefaultApplied = 2;
-  }
-
-  return target;
-}
-
-function readRewardsCounterAttr(item, key) {
-  if (item == null) return 0;
-  const attr = item.attributes || item;
-  const value = Number(attr[key] ?? item[key] ?? 0);
-  return Number.isFinite(value) ? value : 0;
-}
+/**
+ * @typedef {{complete: (number|string|boolean|null|undefined),
+ *     progress: (number|string|null|undefined),
+ *     pointProgress: (number|string|null|undefined),
+ *     currentProgress: (number|string|null|undefined),
+ *     current: (number|string|null|undefined),
+ *     max: (number|string|null|undefined),
+ *     pointProgressMax: (number|string|null|undefined),
+ *     maxProgress: (number|string|null|undefined),
+ *     total: (number|string|null|undefined),
+ *     attributes: (undefined|{complete: (number|string|boolean|null|undefined),
+ *         progress: (number|string|null|undefined),
+ *         max: (number|string|null|undefined)})}} RewardsCounterTier
+ */
 
 /**
- * Pick the counter entry that describes today's earning state.
- *
- * Bing returns `counters.pcSearch` / `counters.mobileSearch` as an array with
- * one entry per point tier, in no guaranteed order. Reading `counterArray[0]`
- * blindly can land on a tier that is already complete while the live tier still
- * has room — which marks the whole daily counter "done" and makes the run skip
- * searching entirely.
- *
- * Same rule as `pickActiveCounter` in js/rewards-metrics.js. Duplicated rather
- * than imported because js/utils.js is evaluated by the test sandbox, which
- * does not resolve `import` statements.
+ * Maps one Rewards search category to the stored daily-done flag.
+ * @param {?Object<string, !Array<!RewardsCounterTier>>} counters Category map
+ *     from getuserinfo. Only the named category is read.
+ * @param {string} name Category key, such as "pcSearch" or "mobileSearch".
+ * @return {number} 1 when that category's selected tier is complete, else 0.
  */
-function pickActiveRewardsCounter(counterArray) {
-  if (!Array.isArray(counterArray)) return null;
-  const items = counterArray.filter((item) => item != null);
-  if (items.length === 0) return null;
-  const active = items.find(
-    (item) =>
-      readRewardsCounterAttr(item, "max") >
-      readRewardsCounterAttr(item, "progress"),
-  );
-  return active || items[items.length - 1];
-}
-
-function isRewardsSearchCounterComplete(counterArray) {
-  const active = pickActiveRewardsCounter(counterArray);
-  if (!active) return false;
-  const progress = readRewardsCounterAttr(active, "progress");
-  const max = readRewardsCounterAttr(active, "max");
-  // A tier that still has room means the day is NOT done, whatever a stale
-  // `complete` flag on that entry claims. Checking this first is what stops an
-  // 18/60 mobile counter from being reported as finished.
-  if (max > 0 && progress < max) return false;
-  if (readRewardsCounterAttr(active, "complete") >= 1) return true;
-  return max > 0 && progress >= max;
-}
-
 function getRewardsSearchCounterDone(counters, name) {
   return isRewardsSearchCounterComplete(counters?.[name]) ? 1 : 0;
 }
 
+/**
+ * @param {number|string|null|undefined} value Stored 0/1 daily-search flag.
+ * @return {boolean} Whether the flag is at least 1.
+ */
 function isDailySearchCounterDone(value) {
   return Number(value) >= 1;
 }
 
+/**
+ * Clears done, total, failed, mobile and act, then persists the runtime
+ * section.
+ * @param {{control: ({log: number}|null|undefined),
+ *     runtime: {done: number, total: number, failed: number, mobile: number,
+ *         act: number}}} config Live config whose runtime section is replaced.
+ * @return {!Promise<boolean>} False when the storage write throws.
+ */
 async function resetRuntime(config) {
   const logs = config?.control?.log;
   try {
@@ -344,15 +201,15 @@ async function resetRuntime(config) {
     config.runtime.mobile = 0;
     config.runtime.act = 0;
 
-    await set(config);
+    await updateConfigSections({runtime: config.runtime});
     if (logs) {
-      log("[RESET RUNTIME] - Runtime counters reset successfully.", "success");
+      log('[RESET RUNTIME] - Runtime counters reset successfully.', 'success');
     }
     return true;
   } catch (error) {
     log(
-      `[RESET RUNTIME] - Error resetting runtime: ${error?.message}`,
-      "error",
+        `[RESET RUNTIME] - Error resetting runtime: ${error?.message}`,
+        'error',
     );
     return false;
   }
@@ -360,11 +217,10 @@ async function resetRuntime(config) {
 
 export {
   log,
-  set,
+  updateConfigSections,
   get,
   atomicUpdate,
   resetRuntime,
-  applyConfigDefaults,
   isRewardsSearchCounterComplete,
   getRewardsSearchCounterDone,
   isDailySearchCounterDone,

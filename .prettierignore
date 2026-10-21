@@ -2,8 +2,9 @@ node_modules/
 .cleanup-baseline/
 coverage/
 package-lock.json
-js/queries.js
-js/queries_extra.js
+**/*.js
+**/*.cjs
+**/*.mjs
 logo/
 *.zip
 dist/

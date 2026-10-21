@@ -1,19 +1,27 @@
 const DEFAULT_REWARD_HOSTS = [
-  "bing.com",
-  "microsoft.com",
-  "live.com",
-  "msn.com",
-  "xbox.com",
-  "microsoftonline.com",
+  'bing.com',
+  'microsoft.com',
+  'live.com',
+  'msn.com',
+  'xbox.com',
+  'microsoftonline.com',
 ];
 
+/**
+ * Checks an HTTP(S) URL against exact hosts and their subdomains.
+ * @param {(string|null|undefined)} url Candidate URL.
+ * @param {!Array<string>=} allowedHosts Permitted hostname suffixes.
+ * @return {boolean} Whether the URL is permitted.
+ */
 export function isRewardActivityUrl(url, allowedHosts = DEFAULT_REWARD_HOSTS) {
   try {
-    const parsed = new URL(String(url || ""));
-    if (!["http:", "https:"].includes(parsed.protocol)) return false;
+    const parsed = new URL(String(url || ''));
+    if (!['http:', 'https:'].includes(parsed.protocol)) {
+      return false;
+    }
     const hostname = parsed.hostname.toLowerCase();
     return allowedHosts.some(
-      (host) => hostname === host || hostname.endsWith(`.${host}`),
+        (host) => hostname === host || hostname.endsWith(`.${host}`),
     );
   } catch {
     return false;
@@ -25,16 +33,34 @@ export function isRewardActivityUrl(url, allowedHosts = DEFAULT_REWARD_HOSTS) {
 // target=_blank plus rel=noopener drops openerTabId, and the new tab is often
 // still about:blank or already on a non-reward host by the time we look.
 // Those tabs are still ours to close.
+/**
+ * @param {?{id: (number|undefined)}} tab Current tab.
+ * @param {(number|string)} mainTabId Main Rewards tab that must remain open.
+ * @param {?Set<number>} existingTabIds Snapshot from before the action.
+ * @return {boolean} Whether this is a newly opened auxiliary tab.
+ */
 export function isActivityOpenedTab(tab, mainTabId, existingTabIds) {
-  if (!tab?.id || Number(tab.id) === Number(mainTabId)) return false;
-  if (existingTabIds?.has(tab.id)) return false;
+  if (!tab?.id || Number(tab.id) === Number(mainTabId)) {
+    return false;
+  }
+  if (existingTabIds?.has(tab.id)) {
+    return false;
+  }
   return true;
 }
 
+/**
+ * Finds auxiliary tabs opened after the pre-action snapshot.
+ * @param {?Array<!chrome.tabs.Tab>} tabs Current browser tabs.
+ * @param {(number|string)} mainTabId Main Rewards tab.
+ * @param {?Set<number>} existingTabIds Pre-action tab IDs.
+ * @return {!Array<!chrome.tabs.Tab>} Tabs eligible for cleanup.
+ */
 export function tabsToClose(tabs, mainTabId, existingTabIds) {
-  return (tabs || []).filter((tab) =>
-    isActivityOpenedTab(tab, mainTabId, existingTabIds),
-  );
+  return (tabs || [])
+      .filter(
+          (tab) => isActivityOpenedTab(tab, mainTabId, existingTabIds),
+      );
 }
 
-export { DEFAULT_REWARD_HOSTS };
+export {DEFAULT_REWARD_HOSTS};
